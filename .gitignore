@@ -1,3 +1,7 @@
+# Parade/Project specific
+bin/
+out/
+
 # Prerequisites
 *.d
 
