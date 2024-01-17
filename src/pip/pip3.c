@@ -6,8 +6,7 @@
 
 #define AVG_DELAY_BETWEEN_CMD_AND_RSP 5 
 
-#define MAX_TIMEOUT_BETWEEN_CMD_AND_RSP 3 
-#define DELAY_FOR_SWITCH_IMAGE_CMD  2
+#define MAX_TIMEOUT_BETWEEN_CMD_AND_RSP 7 
 
 #define MAX_SEQ_NUM 0x07
 
@@ -23,8 +22,13 @@ char* PIP3_APP_SYS_MODE_NAMES[] = {
 		[PIP3_APP_SYS_MODE_SCANNING]        = "Scanning mode",
 		[PIP3_APP_SYS_MODE_DEEP_SLEEP]      = "Deep sleep mode",
 		[PIP3_APP_SYS_MODE_TEST_CONFIG]     = "Test and configuration mode",
-		[PIP3_APP_SYS_MODE_DEEP_STANDBY]    = "Deep standby",
-		[PIP3_APP_SYS_MODE_SECONDARY_IMAGE] = "Secondary image programming mode"
+		[PIP3_APP_SYS_MODE_DEEP_STANDBY]    = "Deep standby"
+};
+
+char* PIP3_FW_CATEGORY_NAMES[] = {
+		[PIP3_FW_CATEGORY_ID_TOUCH_FW]      = "Touch Firmware Category",
+		[PIP3_FW_CATEGORY_ID_PROGRAMMER_FW] = "Programmer Firmware Category",
+		[PIP3_FW_CATEGORY_ID_UTILITY_FW]    = "Utility Firmware Category",
 };
 
 char* PIP3_IMAGE_NAMES[] = {
@@ -41,7 +45,12 @@ char* PIP3_IOCTL_CODE_LABELS[] = {
 		[PIP3_IOCTL_CODE_FILE_CRC]           = "File CRC",
 };
 
-static ChannelType active_channel_type = CHANNEL_TYPE_NONE;
+char* PIP3_PROCESSOR_NAMES[] = {
+		[PIP3_PROCESSOR_ID_PRIMARY] = "Primary",
+		[PIP3_PROCESSOR_ID_AUX_MCU] = "AUX MCU",
+};
+
+static Channel* active_channel = NULL;
 static uint16_t hid_max_output_report_len;
 static uint16_t hid_max_input_report_len;
 
@@ -168,6 +177,57 @@ int do_pip3_command(ReportData* cmd, ReportData* rsp)
 RETURN:
 	free(rsp_report.data);
 	return rc;
+}
+
+int do_pip3_calibrate_cmd(uint8_t seq_num, uint8_t calibration_mode,
+		uint8_t data_0, uint8_t data_1, uint8_t data_2)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+
+	if (seq_num > MAX_SEQ_NUM) {
+		output(ERROR,
+				"%s: The sequence number must be less <= 7 (%u was given).\n",
+				__func__, seq_num);
+		return EXIT_FAILURE;
+	}
+
+	uint16_t cmd_payload_len = sizeof(PIP3_Cmd_Payload_Calibrate) - 1;
+	PIP3_Cmd_Payload_Calibrate cmd_data = {
+			.header = {
+					.report_id          = HID_REPORT_ID_COMMAND,
+					.payload_len_lsb    = cmd_payload_len & 0xFF,
+					.payload_len_msb    = cmd_payload_len >> 8,
+					.seq                = seq_num,
+					.tag                = TAG_BIT,
+					.more_data          = 0,
+					.reserved_section_1 = 0,
+					.cmd_id             = (uint8_t) PIP3_CMD_ID_CALIBRATE,
+					.resp               = 0
+			},
+			.calibration_mode = calibration_mode,
+			.data_0           = data_0,
+			.data_1           = data_1,
+			.data_2           = data_2,
+	};
+	ReportData cmd = {
+			.data = (uint8_t*) &cmd_data,
+			.len  = sizeof(cmd_data)
+	};
+	uint16_t cmd_crc = calculate_crc16_ccitt(0xFFFF, &(cmd.data[1]),
+			cmd.len - 3);
+	cmd.data[cmd.len - 2] = cmd_crc >> 8;
+	cmd.data[cmd.len - 1] = cmd_crc & 0xFF;
+
+	PIP3_Rsp_Payload_Calibrate rsp_data;
+	ReportData rsp = {
+			.data        = (uint8_t*) &rsp_data,
+			.len         = 0,
+			.index       = 0,
+			.num_records = 0,
+			.max_len     = sizeof(PIP3_Rsp_Payload_Calibrate)
+	};
+
+	return do_pip3_command(&cmd, &rsp);
 }
 
 int do_pip3_initialize_baselines_cmd(uint8_t seq_num, uint8_t data_id_mask,
@@ -432,6 +492,13 @@ int do_pip3_file_read_cmd(uint8_t seq_num, uint8_t file_handle,
 	}
 
 	rc = do_pip3_command(&cmd, &_rsp);
+	if (_rsp.len < PIP3_RSP_MIN_LEN) {
+		output(ERROR, "%s: PIP3 FILE_READ response is shorter than the min "
+				"possible PIP3 reponse (% bytes).\n",
+				__func__, PIP3_RSP_MIN_LEN);
+		rc = EXIT_FAILURE;
+		goto RETURN;
+	}
 
 	memcpy((void*) &rsp->header, (void*) _rsp.data, sizeof(PIP3_Rsp_Header));
 
@@ -456,6 +523,7 @@ int do_pip3_file_read_cmd(uint8_t seq_num, uint8_t file_handle,
 		rc = EXIT_FAILURE;
 	}
 
+RETURN:
 	free(_rsp.data);
 	return rc;
 }
@@ -544,12 +612,19 @@ int do_pip3_file_write_cmd(uint8_t seq_num, uint8_t file_handle, ByteData* data)
 			cmd.data[cmd.len - 1] = cmd_crc & 0xFF;
 
 			rc = do_pip3_command(&cmd, &_rsp);
-
-			data_part_start_index += data_part_len;
-			remaining_num_of_writes--;
-			output(DEBUG,
+			if (EXIT_SUCCESS != rc) {
+				output(ERROR,
+						"%s: Aborting the remaining %u FILE_WRITE commands that"
+						" are pending execution.\n",
+						__func__, remaining_num_of_writes - 1);
+				error_occurred = true;
+			} else {
+				data_part_start_index += data_part_len;
+				remaining_num_of_writes--;
+				output(DEBUG,
 					"Remaining number of FILE_WRITE commands to execute: %u.\n",
 					remaining_num_of_writes);
+			}
 		}
 	}
 
@@ -1153,6 +1228,60 @@ int do_pip3_suspend_scanning_cmd(uint8_t seq_num,
 	return do_pip3_command(&cmd, &_rsp);
 }
 
+#define DELAY_FOR_SWITCH_ACTIVE_PROCESS_CMD_MSECS 2
+
+int do_pip3_switch_active_processor_cmd(uint8_t seq_num,
+		PIP3_Processor_ID processor_id, uint8_t switch_data)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+	output(DEBUG, "Switching to the %s processor.\n",
+			PIP3_PROCESSOR_NAMES[processor_id]);
+	int rc = EXIT_FAILURE;
+
+	uint16_t cmd_payload_len =
+			sizeof(PIP3_Cmd_Payload_SwitchActiveProcessor) - 1;
+	PIP3_Cmd_Payload_SwitchActiveProcessor cmd_data = {
+			.header = {
+					.report_id          = HID_REPORT_ID_COMMAND,
+					.payload_len_lsb    = cmd_payload_len & 0xFF,
+					.payload_len_msb    = cmd_payload_len >> 8,
+					.seq                = seq_num,
+					.tag                = TAG_BIT,
+					.more_data          = 0,
+					.reserved_section_1 = 0,
+					.cmd_id             =
+							(uint8_t) PIP3_CMD_ID_SWITCH_ACTIVE_PROCESSOR,
+					.resp               = 0
+			},
+			.processor_id = (uint8_t) processor_id,
+			.switch_data  = switch_data
+	};
+	ReportData cmd = {
+			.data = (uint8_t*) &cmd_data,
+			.len  = sizeof(cmd_data)
+	};
+	uint16_t cmd_crc = calculate_crc16_ccitt(
+			0xFFFF, &(cmd.data[1]), cmd.len - 3);
+	cmd.data[cmd.len - 2] = cmd_crc >> 8;
+	cmd.data[cmd.len - 1] = cmd_crc & 0xFF;
+
+	output_debug_report(REPORT_DIRECTION_OUTGOING_TO_DUT, REPORT_FORMAT_HID,
+			PIP3_CMD_NAMES[PIP3_CMD_ID_SWITCH_ACTIVE_PROCESSOR],
+			REPORT_TYPE_COMMAND, &cmd);
+	rc = send_report_via_channel(&cmd);
+
+	output(DEBUG,
+			"Waiting %u milliseconds to give the DUT enough time to switch "
+			"processes.\n",
+			DELAY_FOR_SWITCH_ACTIVE_PROCESS_CMD_MSECS);
+	sleep_ms(DELAY_FOR_SWITCH_ACTIVE_PROCESS_CMD_MSECS);
+
+	output(DEBUG, "%s: Leaving.\n", __func__);
+	return rc;
+}
+
+#define DELAY_FOR_SWITCH_IMAGE_CMD_SECS 2
+
 int do_pip3_switch_image_cmd(uint8_t seq_num, PIP3_Image_ID image_id)
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
@@ -1186,20 +1315,70 @@ int do_pip3_switch_image_cmd(uint8_t seq_num, PIP3_Image_ID image_id)
 	output_debug_report(REPORT_DIRECTION_OUTGOING_TO_DUT, REPORT_FORMAT_HID,
 			PIP3_CMD_NAMES[PIP3_CMD_ID_SWITCH_IMAGE], REPORT_TYPE_COMMAND,
 			&cmd);
-	rc = write_report(&cmd, HIDRAW0_SYSFS_NODE_FILE);
+	rc = send_report_via_channel(&cmd);
 
-	output(DEBUG, "Waiting %u seconds to give the DUT enough time to switch "
-			"images.\n", DELAY_FOR_SWITCH_IMAGE_CMD);
-	sleep(DELAY_FOR_SWITCH_IMAGE_CMD);
+	output(DEBUG,
+			"Waiting %u seconds to give the DUT enough time to switch "
+			"images.\n",
+			DELAY_FOR_SWITCH_IMAGE_CMD_SECS);
+	sleep(DELAY_FOR_SWITCH_IMAGE_CMD_SECS);
 
 	output(DEBUG, "%s: Leaving.\n", __func__);
 	return rc;
 }
 
+int do_pip3_version_cmd(uint8_t seq_num, PIP3_Rsp_Payload_Version* rsp)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+
+	if (rsp == NULL) {
+		output(ERROR, "%s: NULL argument provided.\n", __func__);
+		return EXIT_FAILURE;
+	} else if (seq_num > MAX_SEQ_NUM) {
+		output(ERROR,
+				"%s: The sequence number must be less <= 7 (%u was given).\n",
+				__func__, seq_num);
+		return EXIT_FAILURE;
+	}
+
+	uint16_t cmd_payload_len = sizeof(PIP3_Cmd_Payload_Version) - 1;
+	PIP3_Cmd_Payload_Version cmd_data = {
+			.header = {
+					.report_id          = HID_REPORT_ID_COMMAND,
+					.payload_len_lsb    = cmd_payload_len & 0xFF,
+					.payload_len_msb    = cmd_payload_len >> 8,
+					.seq                = seq_num,
+					.tag                = TAG_BIT,
+					.more_data          = 0,
+					.reserved_section_1 = 0,
+					.cmd_id             = (uint8_t) PIP3_CMD_ID_VERSION,
+					.resp               = 0
+			}
+	};
+	ReportData cmd = {
+			.data = (uint8_t*) &cmd_data,
+			.len  = sizeof(cmd_data)
+	};
+	uint16_t cmd_crc = calculate_crc16_ccitt(0xFFFF, &(cmd.data[1]),
+			cmd.len - 3);
+	cmd.data[cmd.len - 2] = cmd_crc >> 8;
+	cmd.data[cmd.len - 1] = cmd_crc & 0xFF;
+
+	ReportData _rsp = {
+			.data        = (uint8_t*) rsp,
+			.len         = 0,
+			.index       = 0,
+			.num_records = 0,
+			.max_len     = sizeof(PIP3_Rsp_Payload_Version)
+	};
+
+	return do_pip3_command(&cmd, &_rsp);
+}
+
 bool is_pip3_api_active()
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
-	return active_channel_type != CHANNEL_TYPE_NONE;
+	return active_channel != NULL && active_channel->type != CHANNEL_TYPE_NONE;
 }
 
 Poll_Status get_pip3_unsolicited_async_rsp(ReportData* rsp, bool apply_timeout,
@@ -1296,50 +1475,60 @@ RETURN:
 	return rc;
 }
 
-int setup_pip3_api(ChannelType channel_type, HID_Report_ID report_id)
+int setup_pip3_api(Channel* channel, HID_Report_ID report_id)
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 	HID_Descriptor hid_desc;
 
-	if (active_channel_type != CHANNEL_TYPE_NONE
-			&& active_channel_type != channel_type) {
-		output(ERROR, "%s: The API is already configured to use the channel.\n",
-				CHANNEL_TYPE_NAMES[channel_type]);
+	if (channel == NULL) {
+		output(ERROR, "%s: NULL argument provided.\n", __func__);
 		return EXIT_FAILURE;
-	} else if (active_channel_type != CHANNEL_TYPE_NONE) {
-		output(DEBUG, "%s: The API is already configured to use the channel.\n",
-						CHANNEL_TYPE_NAMES[channel_type]);
+	} else if (active_channel != NULL
+			&& active_channel->type != channel->type) {
+		output(ERROR,
+				"%s: The API is already configured to use the %s channel.\n",
+				__func__, CHANNEL_TYPE_NAMES[channel->type]);
+		return EXIT_FAILURE;
+	} else if (active_channel != NULL
+			&& active_channel->type == channel->type) {
+		output(DEBUG, "The API is already configured to use the %s channel.\n",
+				CHANNEL_TYPE_NAMES[channel->type]);
 		return EXIT_SUCCESS;
 	}
 
-	switch (channel_type) { 
+	switch (channel->type) {
 	case CHANNEL_TYPE_HIDRAW:
-		if (EXIT_SUCCESS != get_hid_descriptor_from_hidraw(&hid_desc)) {
-			return EXIT_FAILURE;
-		}
-
-		if (EXIT_SUCCESS != start_hidraw_report_reader(report_id)) {
-			return EXIT_FAILURE;
-		}
-
-		hid_max_input_report_len = hid_desc.max_input_len;
-		hid_max_output_report_len = hid_desc.max_output_len;
-		output(DEBUG, "HID Max Input Report length: %u bytes.\n",
-				hid_max_input_report_len);
-		output(DEBUG, "HID Max Output Report length: %u bytes.\n",
-				hid_max_output_report_len);
-		send_report_via_channel = send_report_via_hidraw;
-		get_report_via_channel = get_report_from_hidraw;
+	case CHANNEL_TYPE_TTDL:
 		break;
+
 	default:
 		output(ERROR, "%s: Given an invalid/unsupported channel type.\n",
 				__func__);
 		return EXIT_FAILURE;
 	}
 
-	active_channel_type = channel_type;
+	active_channel = channel;
+
 	output(DEBUG, "Using the %s channel type.\n",
-				CHANNEL_TYPE_NAMES[channel_type]);
+			CHANNEL_TYPE_NAMES[active_channel->type]);
+
+	if (EXIT_SUCCESS != active_channel->get_hid_descriptor(&hid_desc)) {
+		return EXIT_FAILURE;
+	}
+
+	if (EXIT_SUCCESS != active_channel->setup(report_id)) {
+		return EXIT_FAILURE;
+	}
+
+	send_report_via_channel = active_channel->send_report;
+	get_report_via_channel = active_channel->get_report;
+
+	hid_max_input_report_len = hid_desc.max_input_len;
+	hid_max_output_report_len = hid_desc.max_output_len;
+	output(DEBUG, "HID Max Input Report length: %u bytes.\n",
+			hid_max_input_report_len);
+	output(DEBUG, "HID Max Output Report length: %u bytes.\n",
+			hid_max_output_report_len);
 
 	return EXIT_SUCCESS;
 }
@@ -1348,23 +1537,18 @@ int teardown_pip3_api()
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 
-	switch (active_channel_type) {
-	case CHANNEL_TYPE_NONE:
+	if (active_channel == NULL) {
 		output(DEBUG, "API is already inactive.\n");
-		break;
-	case CHANNEL_TYPE_HIDRAW:
-		if (EXIT_SUCCESS != stop_hidraw_report_reader()) {
-			return EXIT_FAILURE;
-		}
-		active_channel_type = CHANNEL_TYPE_NONE;
-		break;
-	default:
-		output(ERROR, "%s: Given an invalid/unsupported channel type.\n",
-				__func__);
-		return EXIT_FAILURE;
+		return EXIT_SUCCESS;
 	}
 
-	return EXIT_SUCCESS;
+	PIP3_Rsp_Payload_ResumeScanning resume_scanning_rsp;
+	int rc = do_pip3_resume_scanning_cmd(0x00, &resume_scanning_rsp);
+
+	active_channel->teardown();
+	active_channel = NULL;
+
+	return rc;
 }
 
 static int _verify_pip3_rsp_report(HID_Report_ID report_id, uint8_t seq,
@@ -1386,15 +1570,15 @@ static int _verify_pip3_rsp_report(HID_Report_ID report_id, uint8_t seq,
 			return EXIT_FAILURE;
 		}
 
-		if (seq != rsp->seq) {
-			output(ERROR,
-					"%s: The Command SEQ (%u) and Response SEQ (%u) do not "
-					"match.\n",
-					__func__, seq, rsp->seq);
-			return EXIT_FAILURE;
-		}
-
 		if (report_id == HID_REPORT_ID_SOLICITED_RESPONSE) {
+			if (seq != rsp->seq) {
+				output(ERROR,
+						"%s: The Command SEQ (%u) and Response SEQ (%u) do not "
+						"match.\n",
+						__func__, seq, rsp->seq);
+				return EXIT_FAILURE;
+			}
+
 			if (rsp->resp != 1) {
 				output(ERROR,
 						"%s: RESP bit must always be set for PIP3 solicited"

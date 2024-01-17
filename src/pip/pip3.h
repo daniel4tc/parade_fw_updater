@@ -5,13 +5,14 @@
 #ifndef PTLIB_PIP3_H_
 #define PTLIB_PIP3_H_
 
-#include "../base64.h"
-#include "../channel.h"
-#include "../crc16_ccitt.h"
-#include "../hid/hidraw.h"
 #include "pip3_cmd_id.h"
 #include "pip3_self_test_id.h"
 #include "pip3_status_code.h"
+#include "../base64.h"
+#include "../crc16_ccitt.h"
+#include "../channel/channel.h"
+#include "../sleep/ptlib_sleep.h"
+#include <fcntl.h>
 
 #define HID_INPUT_PIP3_RSP_PAYLOAD_START_BYTE_INDEX  2
 
@@ -29,11 +30,19 @@ typedef enum {
 	PIP3_APP_SYS_MODE_DEEP_SLEEP      = 0x02,
 	PIP3_APP_SYS_MODE_TEST_CONFIG     = 0x03,
 	PIP3_APP_SYS_MODE_DEEP_STANDBY    = 0x04,
-	PIP3_APP_SYS_MODE_SECONDARY_IMAGE = 0x05,
 	NUM_OF_PIP3_APP_SYS_MODES = 6
 } PIP3_App_Sys_Mode;
 
 extern char* PIP3_APP_SYS_MODE_NAMES[NUM_OF_PIP3_APP_SYS_MODES];
+
+typedef enum {
+	PIP3_FW_CATEGORY_ID_TOUCH_FW      = 0x0,
+	PIP3_FW_CATEGORY_ID_PROGRAMMER_FW = 0x1,
+	PIP3_FW_CATEGORY_ID_UTILITY_FW    = 0x2,
+	NUM_OF_PIP3_FW_CATEGORY_IDS       = 3
+} PIP3_FW_Category_ID;
+
+extern char* PIP3_FW_CATEGORY_NAMES[NUM_OF_PIP3_FW_CATEGORY_IDS];
 
 typedef enum {
 	PIP3_IMAGE_ID_PRIMARY   = 0x00,
@@ -57,6 +66,15 @@ typedef enum {
 
 extern char* PIP3_IOCTL_CODE_LABELS[NUM_OF_PIP3_IOCTL_CODES];
 
+typedef enum {
+	PIP3_PROCESSOR_ID_PRIMARY = 0x00,
+	PIP3_PROCESSOR_ID_AUX_MCU = 0x01,
+
+	NUM_OF_PIP3_PROCESSOR_IDS = 2
+} PIP3_Processor_ID;
+
+extern char* PIP3_PROCESSOR_NAMES[NUM_OF_PIP3_PROCESSOR_IDS];
+
 typedef struct {
 	uint8_t report_id;                  
 	uint8_t payload_len_lsb;            
@@ -78,6 +96,8 @@ typedef struct {
 	uint8_t crc_lsb;
 } __attribute__((packed)) PIP3_Cmd_Footer;
 
+#define PIP3_RSP_MIN_LEN 7
+
 typedef struct {
 	uint8_t payload_len_lsb;            
 	uint8_t payload_len_msb;            
@@ -98,6 +118,20 @@ typedef struct {
 	uint8_t crc_msb;
 	uint8_t crc_lsb;
 } __attribute__((packed)) PIP3_Rsp_Footer;
+
+typedef struct {
+	PIP3_Cmd_Header header;
+	uint8_t calibration_mode;
+	uint8_t data_0;
+	uint8_t data_1;
+	uint8_t data_2;
+	PIP3_Cmd_Footer footer;
+} __attribute__((packed)) PIP3_Cmd_Payload_Calibrate;
+
+typedef struct {
+	PIP3_Rsp_Header header;
+	PIP3_Rsp_Footer footer;
+} __attribute__((packed)) PIP3_Rsp_Payload_Calibrate;
 
 typedef struct {
 	PIP3_Cmd_Header header;
@@ -342,7 +376,8 @@ typedef struct {
 	PIP3_Rsp_Header header;             
 	struct {                            
 		uint8_t exec               : 1;
-		uint8_t reserved_section_2 : 7;
+		uint8_t active_processor   : 2;
+		uint8_t reserved_section_2 : 5;
 	} __attribute__((packed));
 	uint8_t sys_mode;                   
 	struct {                            
@@ -375,9 +410,41 @@ typedef struct {
 
 typedef struct {
 	PIP3_Cmd_Header header;
+	uint8_t processor_id;
+	uint8_t switch_data;
+	PIP3_Cmd_Footer footer;
+} __attribute__((packed)) PIP3_Cmd_Payload_SwitchActiveProcessor;
+
+typedef struct {
+	PIP3_Cmd_Header header;
 	uint8_t image_id;
 	PIP3_Cmd_Footer footer;
 } __attribute__((packed)) PIP3_Cmd_Payload_SwitchImage;
+
+typedef struct {
+	PIP3_Cmd_Header header;
+	PIP3_Cmd_Footer footer;
+} __attribute__((packed)) PIP3_Cmd_Payload_Version;
+
+typedef struct {
+	PIP3_Rsp_Header header;
+	uint8_t pip_version_minor;
+	uint8_t pip_version_major;
+	uint8_t fw_version_minor;
+	uint8_t fw_version_major;
+	uint8_t fw_rev_control_num[4];
+	struct {
+		uint8_t reserved         : 4;
+		uint8_t fw_category_id   : 4;
+	} __attribute__((packed));
+	uint8_t fw_uid;
+	uint8_t chip_rev_lsb;
+	uint8_t chip_rev_msb;
+	uint8_t chip_id_lsb;
+	uint8_t chip_id_msb;
+	uint8_t silicon_uid[12];
+	PIP3_Rsp_Footer footer;
+} __attribute__((packed)) PIP3_Rsp_Payload_Version;
 
 int (*send_report_via_channel)(const ReportData* report);
 
@@ -385,6 +452,9 @@ Poll_Status (*get_report_via_channel)(ReportData* report, bool apply_timeout,
 		long double timeout_val);
 
 extern int do_pip3_command(ReportData* cmd, ReportData* rsp);
+extern int do_pip3_calibrate_cmd(uint8_t seq_num, uint8_t calibrate_mode,
+		uint8_t data_0, uint8_t data_1, uint8_t data_2);
+
 extern int do_pip3_initialize_baselines_cmd(uint8_t seq_num,
 		uint8_t data_id_mask, PIP3_Rsp_Payload_InitializeBaselines* rsp);
 extern int do_pip3_file_close_cmd(uint8_t seq_num, uint8_t file_handle,
@@ -415,11 +485,14 @@ extern int do_pip3_stop_async_debug_data_cmd(uint8_t seq_num,
 		PIP3_Rsp_Payload_StopAsyncDebugData* rsp);
 extern int do_pip3_suspend_scanning_cmd(uint8_t seq_num,
 		PIP3_Rsp_Payload_SuspendScanning* rsp);
+extern int do_pip3_switch_active_processor_cmd(uint8_t seq_num,
+		PIP3_Processor_ID processor_id, uint8_t switch_data);
 extern int do_pip3_switch_image_cmd(uint8_t seq_num, PIP3_Image_ID image_id);
+extern int do_pip3_version_cmd(uint8_t seq_num, PIP3_Rsp_Payload_Version* rsp);
 extern Poll_Status get_pip3_unsolicited_async_rsp(ReportData* rsp,
 		bool apply_timeout, long double timeout_val);
 extern bool is_pip3_api_active();
-extern int setup_pip3_api(ChannelType channel_type, HID_Report_ID report_id);
+extern int setup_pip3_api(Channel* channel, HID_Report_ID report_id);
 extern int teardown_pip3_api();
 
 #endif 

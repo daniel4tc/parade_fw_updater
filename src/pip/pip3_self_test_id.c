@@ -41,6 +41,8 @@ char* PIP3_SELF_TEST_NAMES[] = {
 				"Normalized raw counts for LFT mode"),
 		[PIP3_SELF_TEST_ID_NOISE_MC]                 = (
 				"Noise test for MC"),
-		[PIP3_SELF_TEST_ID_DEVICE_OFF_I2C_BUS]       = (
-				"Remove device off of the I2C bus for n seconds")
+		[PIP3_SELF_TEST_ID_SENSOR_CA_NOISE]          = (
+				"Sensor CA Noise (charger armor)"),
+		[PIP3_SELF_TEST_ID_TOUCH_PANEL_ENABLED]      = (
+				"Touch Panel Enabled (TP_EN Asserted)"),
 };

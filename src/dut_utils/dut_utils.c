@@ -10,12 +10,15 @@
 #define MAX_NUM_OF_BYTES_PER_SENSOR  8
 
 char* FW_LOADER_NAMES[] = {
-		[FLASH_LOADER_NONE]            = "No active/valid flash loader",
-		[FLASH_LOADER_SECONDARY_IMAGE] = "Secondary Loader Image",
-		[FLASH_LOADER_PIP2_ROM_BL]     = "PIP2 ROM-Bootloader",
+	[FLASH_LOADER_NONE]                     = "No active/valid flash loader",
+	[FLASH_LOADER_TP_PROGRAMMER_IMAGE]      = "TP Programmer Image",
+	[FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE] = "AUX MCU Programmer Image",
+	[FLASH_LOADER_PIP2_ROM_BL]              = "PIP2 ROM-Bootloader",
 };
 
+static DUT_State active_dut_state = DUT_STATE_DEFAULT;
 static Flash_Loader active_flash_loader = FLASH_LOADER_NONE;
+static struct timeval aux_mcu_active_start_time;
 
 static int _enter_flash_loader(const Flash_Loader_Options* options);
 static int _erase_config_file(uint8_t config_file_num);
@@ -24,10 +27,48 @@ static int _flash_file_close(uint8_t file_handle);
 static int _flash_file_erase(uint8_t file_handle);
 static int _flash_file_open(uint8_t file_num, uint8_t* file_handle);
 static int _flash_file_write(uint8_t file_handle, ByteData* data);
-static int _set_dut_state_bl_exec();
-static int _set_dut_state_fw_exec();
-static int _set_dut_state_fw_scanning();
-static int _set_dut_state_secondary_img();
+static int _set_dut_state_aux_mcu_fw_programmer_img();
+static int _set_dut_state_aux_mcu_fw_utility_img();
+static int _set_dut_state_tp_bl_exec();
+static int _set_dut_state_tp_fw_exec();
+static int _set_dut_state_tp_fw_scanning();
+static int _set_dut_state_tp_programmer_img();
+static int _verify_active_processor(PIP3_Processor_ID expected_processor,
+		long double timeout_seconds);
+static int _verify_fw_category(PIP3_FW_Category_ID expected_fw_category_id);
+
+#define CALIBRATION_MODE_FULL_CALIBRATION (0x00)
+#define CALIBRATION_PARAM_DATA_IGNORED    (0x00)
+
+int calibrate_dut()
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+	int rc = EXIT_FAILURE;
+	PIP3_Rsp_Payload_ResumeScanning resume_scan_rsp;
+	PIP3_Rsp_Payload_SuspendScanning suspend_scan_rsp;
+	bool scanning_suspended = false;
+
+	rc = do_pip3_suspend_scanning_cmd(0x00, &suspend_scan_rsp);
+	if (rc != EXIT_SUCCESS) {
+		goto RETURN;
+	}
+	scanning_suspended = true;
+
+	rc = do_pip3_calibrate_cmd(0x00, CALIBRATION_MODE_FULL_CALIBRATION,
+			CALIBRATION_PARAM_DATA_IGNORED, CALIBRATION_PARAM_DATA_IGNORED,
+			CALIBRATION_PARAM_DATA_IGNORED);
+	if (rc != EXIT_SUCCESS) {
+		goto RETURN;
+	}
+
+RETURN:
+	if (scanning_suspended && EXIT_SUCCESS
+			!= do_pip3_resume_scanning_cmd(0x00, &resume_scan_rsp)) {
+		rc = EXIT_FAILURE;
+	}
+
+	return rc;
+}
 
 int do_dut_fw_self_test(PIP3_Self_Test_ID self_test_id,
 		int output_format_id, ByteData* cmd_params, bool signed_data,
@@ -57,8 +98,10 @@ int do_dut_fw_self_test(PIP3_Self_Test_ID self_test_id,
 		return EXIT_FAILURE;
 	}
 
-	get_self_test_results_rsp.data = (uint8_t*) calloc(
-			results->max_len * MAX_NUM_OF_BYTES_PER_SENSOR, 1);
+	max_rsp_len = (results->max_len * MAX_NUM_OF_BYTES_PER_SENSOR)
+			+ sizeof(PIP3_Rsp_Payload_GetSelfTestResults);
+
+	get_self_test_results_rsp.data = (uint8_t*) calloc(max_rsp_len, 1);
 	if (get_self_test_results_rsp.data == NULL) {
 		output(ERROR, "%s: Memory allocation failed.\n", __func__);
 		return EXIT_FAILURE;
@@ -83,7 +126,6 @@ int do_dut_fw_self_test(PIP3_Self_Test_ID self_test_id,
 		goto RETURN;
 	}
 
-	max_rsp_len = (results->max_len * MAX_NUM_OF_BYTES_PER_SENSOR);
 	rc = do_pip3_get_self_test_results_cmd(0x00, (uint8_t) self_test_id,
 			&get_self_test_results_rsp, max_rsp_len);
 	if (rc != EXIT_SUCCESS) {
@@ -160,7 +202,7 @@ int read_dut_fw_bin_header(FW_Bin_Header* bin_header)
 	size_t max_rsp_len;
 	int rc = EXIT_FAILURE;
 
-	cmd_rc = set_dut_state(DUT_STATE_TP_FW_SECONDARY_IMAGE);
+	cmd_rc = set_dut_state(DUT_STATE_TP_FW_PROGRAMMER_IMAGE);
 	if (cmd_rc != EXIT_SUCCESS) {
 		rc = cmd_rc;
 		goto RETURN;
@@ -213,23 +255,32 @@ int set_dut_state(DUT_State target_state)
 	case DUT_STATE_TP_FW_BOOT:
 		goto RETURN_NOT_SUPPORTED;
 	case DUT_STATE_TP_FW_SCANNING:
-		return _set_dut_state_fw_scanning();
+		return _set_dut_state_tp_fw_scanning();
 	case DUT_STATE_TP_FW_DEEP_SLEEP:
 		goto RETURN_NOT_SUPPORTED;
 	case DUT_STATE_TP_FW_TEST:
 		goto RETURN_NOT_SUPPORTED;
 	case DUT_STATE_TP_FW_DEEP_STANDBY:
 		goto RETURN_NOT_SUPPORTED;
-	case DUT_STATE_TP_FW_SECONDARY_IMAGE:
-		return _set_dut_state_secondary_img();
+	case DUT_STATE_TP_FW_PROGRAMMER_IMAGE:
+		return _set_dut_state_tp_programmer_img();
 	case DUT_STATE_TP_FW_SYS_MODE_ANY:
-		return _set_dut_state_fw_exec();
+		return _set_dut_state_tp_fw_exec();
 	case DUT_STATE_TP_BL:
-		return _set_dut_state_bl_exec();
-	case DUT_STATE_AUX_MCU_FW:
-		goto RETURN_NOT_SUPPORTED;
-	case DUT_STATE_AUX_MCU_BL:
-		goto RETURN_NOT_SUPPORTED;
+		return _set_dut_state_tp_bl_exec();
+	case DUT_STATE_AUX_MCU_FW_UTILITY_IMAGE:
+		if (get_dut_driver() == DUT_DRIVER_TTDL) {
+			goto RETURN_NOT_SUPPORTED;
+		}
+		return _set_dut_state_aux_mcu_fw_utility_img();
+	case DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE:
+		if (get_dut_driver() == DUT_DRIVER_TTDL) {
+			active_flash_loader = FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE;
+			active_dut_state = DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE;
+			return EXIT_SUCCESS;
+		} else {
+			return _set_dut_state_aux_mcu_fw_programmer_img();
+		}
 	case DUT_STATE_DEFAULT:
 		return EXIT_SUCCESS;
 	default:
@@ -345,8 +396,11 @@ static int _enter_flash_loader(const Flash_Loader_Options* options)
 			i < NUM_OF_FLASH_LOADERS && options->list[i] != FLASH_LOADER_NONE;
 			i++) {
 		switch (options->list[i]) {
-		case FLASH_LOADER_SECONDARY_IMAGE:
-			cmd_rc = set_dut_state(DUT_STATE_TP_FW_SECONDARY_IMAGE);
+		case FLASH_LOADER_TP_PROGRAMMER_IMAGE:
+			cmd_rc = set_dut_state(DUT_STATE_TP_FW_PROGRAMMER_IMAGE);
+			break;
+		case FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE:
+			cmd_rc = set_dut_state(DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE);
 			break;
 		case FLASH_LOADER_PIP2_ROM_BL:
 			cmd_rc = set_dut_state(DUT_STATE_TP_BL);
@@ -423,6 +477,16 @@ static int _exit_flash_loader()
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 
+	if (active_flash_loader == FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE) {
+		if (get_dut_driver() == DUT_DRIVER_TTDL) {
+
+			active_flash_loader = FLASH_LOADER_NONE;
+			return EXIT_SUCCESS;
+		} else {
+			return set_dut_state(DUT_STATE_TP_FW_SYS_MODE_ANY);
+		}
+	}
+
 	Flash_Loader initial_loader = active_flash_loader;
 
 	if (FLASH_LOADER_PIP2_ROM_BL == active_flash_loader) {
@@ -442,11 +506,11 @@ static int _exit_flash_loader()
 				"Exited the ROM-BL but unable to enter Scanning mode.\n");
 	}
 
-	if (initial_loader == FLASH_LOADER_SECONDARY_IMAGE
-			&& active_flash_loader == FLASH_LOADER_SECONDARY_IMAGE) {
+	if (initial_loader == FLASH_LOADER_TP_PROGRAMMER_IMAGE
+			&& active_flash_loader == FLASH_LOADER_TP_PROGRAMMER_IMAGE) {
 		output(WARNING,
-				"Stuck in the Secondary Loader image. Please update the Primary"
-				" Touch image.\n");
+				"Stuck in the Touch Processor's Programmer image. Please update"
+				" the Touch Processors Primary Touch firmware image.\n");
 	}
 
 	return EXIT_SUCCESS;
@@ -461,7 +525,8 @@ static int _flash_file_close(uint8_t file_handle)
 		output(ERROR, "%s: %s.\n",
 				__func__, FW_LOADER_NAMES[active_flash_loader]);
 		rc = EXIT_FAILURE;
-	} else if (FLASH_LOADER_SECONDARY_IMAGE == active_flash_loader) {
+	} else if (FLASH_LOADER_TP_PROGRAMMER_IMAGE == active_flash_loader
+			|| FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE == active_flash_loader) {
 		PIP3_Rsp_Payload_FileClose file_close_rsp;
 		rc = do_pip3_file_close_cmd(0x00, file_handle, &file_close_rsp);
 	} else if (FLASH_LOADER_PIP2_ROM_BL == active_flash_loader) {
@@ -486,7 +551,8 @@ static int _flash_file_erase(uint8_t file_handle)
 		output(ERROR, "%s: %s.\n",
 				__func__, FW_LOADER_NAMES[active_flash_loader]);
 		rc = EXIT_FAILURE;
-	} else if (FLASH_LOADER_SECONDARY_IMAGE == active_flash_loader) {
+	} else if (FLASH_LOADER_TP_PROGRAMMER_IMAGE == active_flash_loader
+			|| FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE == active_flash_loader) {
 		PIP3_Rsp_Payload_FileIOCTL_EraseFile file_ioctl_erase_rsp;
 		rc = do_pip3_file_ioctl_erase_file_cmd(0x00, file_handle,
 				&file_ioctl_erase_rsp);
@@ -513,7 +579,8 @@ static int _flash_file_open(uint8_t file_num, uint8_t* file_handle)
 		output(ERROR, "%s: %s.\n",
 				__func__, FW_LOADER_NAMES[active_flash_loader]);
 		rc = EXIT_FAILURE;
-	} else if (FLASH_LOADER_SECONDARY_IMAGE == active_flash_loader) {
+	} else if (FLASH_LOADER_TP_PROGRAMMER_IMAGE == active_flash_loader
+			|| FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE == active_flash_loader) {
 		PIP3_Rsp_Payload_FileOpen file_open_rsp;
 		rc = do_pip3_file_open_cmd(0x00, file_num, &file_open_rsp);
 		*file_handle = file_open_rsp.file_handle;
@@ -540,7 +607,8 @@ static int _flash_file_write(uint8_t file_handle, ByteData* data)
 		output(ERROR, "%s: %s.\n",
 				__func__, FW_LOADER_NAMES[active_flash_loader]);
 		rc = EXIT_FAILURE;
-	} else if (FLASH_LOADER_SECONDARY_IMAGE == active_flash_loader) {
+	} else if (FLASH_LOADER_TP_PROGRAMMER_IMAGE == active_flash_loader
+			|| FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE == active_flash_loader) {
 		rc = do_pip3_file_write_cmd(0x00, file_handle, data);
 	} else if (FLASH_LOADER_PIP2_ROM_BL == active_flash_loader) {
 		rc = do_pip2_file_write_cmd(0x00, file_handle, data);
@@ -554,7 +622,90 @@ static int _flash_file_write(uint8_t file_handle, ByteData* data)
 	return rc;
 }
 
-static int _set_dut_state_bl_exec()
+#define AUX_MCU_MAX_WAIT_TO_ACTIVATE_SECONDS 5
+
+static int _set_dut_state_aux_mcu()
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+
+	errno = 0; 
+
+	if (active_dut_state == DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE
+			|| active_dut_state == DUT_STATE_AUX_MCU_FW_UTILITY_IMAGE) {
+		output(DEBUG, "Already setup for communication with AUX MCU.\n");
+		return EXIT_SUCCESS;
+	}
+
+	output(INFO,
+"\t Switching from the primary processor to the AUX MCU. This could take\n"
+"\t several seconds.\n");
+	gettimeofday(&aux_mcu_active_start_time, 0);
+
+	if (EXIT_SUCCESS != do_pip3_switch_active_processor_cmd(0x00,
+			PIP3_PROCESSOR_ID_AUX_MCU, get_aux_mcu_active_duration_seconds())) {
+		return EXIT_FAILURE;
+	}
+
+	return _verify_active_processor(PIP3_PROCESSOR_ID_AUX_MCU,
+			AUX_MCU_MAX_WAIT_TO_ACTIVATE_SECONDS);
+}
+
+static int _set_dut_state_aux_mcu_fw_programmer_img()
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+
+	if (active_dut_state == DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE) {
+		output(DEBUG, "Already setup for communication with %s.\n",
+				DUT_STATE_LABELS[DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE]);
+		return EXIT_SUCCESS;
+	}
+
+	if (EXIT_SUCCESS != _set_dut_state_aux_mcu()) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	if (EXIT_SUCCESS
+			!= do_pip3_switch_image_cmd(0x00, PIP3_IMAGE_ID_SECONDARY)) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	if (EXIT_SUCCESS
+			!= _verify_fw_category(PIP3_FW_CATEGORY_ID_PROGRAMMER_FW)) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	active_dut_state = DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE;
+	return EXIT_SUCCESS;
+}
+
+static int _set_dut_state_aux_mcu_fw_utility_img()
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+
+	if (active_dut_state == DUT_STATE_AUX_MCU_FW_UTILITY_IMAGE) {
+		output(DEBUG, "Already setup for communication with %s.\n",
+				DUT_STATE_LABELS[DUT_STATE_AUX_MCU_FW_UTILITY_IMAGE]);
+		return EXIT_SUCCESS;
+	}
+
+	if (EXIT_SUCCESS != _set_dut_state_aux_mcu()) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	if (EXIT_SUCCESS != _verify_fw_category(PIP3_FW_CATEGORY_ID_UTILITY_FW)) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	active_dut_state = DUT_STATE_AUX_MCU_FW_UTILITY_IMAGE;
+	return EXIT_SUCCESS;
+}
+
+static int _set_dut_state_tp_bl_exec()
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 	int rc = EXIT_FAILURE;
@@ -581,6 +732,7 @@ static int _set_dut_state_bl_exec()
 	close(initial_stderr_fd);
 
 	if (rc == EXIT_SUCCESS) {
+		active_dut_state = DUT_STATE_TP_BL;
 		output(DEBUG, "Already in the %s.\n",
 				DUT_STATE_LABELS[DUT_STATE_TP_BL]);
 		return rc;
@@ -602,11 +754,13 @@ static int _set_dut_state_bl_exec()
 
 	rc = do_pip3_switch_image_cmd(0x00, PIP3_IMAGE_ID_ROM_BL);
 	if (rc != EXIT_SUCCESS) {
+		active_dut_state = DUT_STATE_INVALID;
 		return rc;
 	}
 
 	rc = do_pip2_status_cmd(0x00, &pip2_status_rsp);
 	if (rc != EXIT_SUCCESS) {
+		active_dut_state = DUT_STATE_INVALID;
 		output(ERROR, "%s: Attempted to switch to the % but the PIP2 STATUS cmd"
 				" failed.\n",
 				__func__, DUT_STATE_LABELS[DUT_STATE_TP_BL]);
@@ -614,35 +768,84 @@ static int _set_dut_state_bl_exec()
 	}
 
 	output(DEBUG, "Now in the %s.\n", DUT_STATE_LABELS[DUT_STATE_TP_BL]);
+	active_dut_state = DUT_STATE_TP_BL;
 	return rc;
 }
 
-static int _set_dut_state_fw_exec()
+static int _set_dut_state_tp_fw_exec()
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
-	int rc = EXIT_FAILURE;
 	PIP2_Rsp_Payload_Status pip2_status_rsp;
 	PIP3_Rsp_Payload_Status pip3_status_rsp;
 
-	rc = do_pip3_status_cmd(0x00, &pip3_status_rsp);
+	if (active_dut_state == DUT_STATE_AUX_MCU_FW_UTILITY_IMAGE
+			|| active_dut_state == DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE) {
 
-	if (rc == EXIT_SUCCESS) {
+		if (active_dut_state == DUT_STATE_AUX_MCU_FW_PROGRAMMER_IMAGE
+				&& EXIT_SUCCESS != do_pip3_switch_image_cmd(0x00,
+						PIP3_IMAGE_ID_PRIMARY)) {
+			active_dut_state = DUT_STATE_INVALID;
+			return EXIT_FAILURE;
+		}
+
+		struct timeval now_time;
+		long double delta_sec;
+		uint duration_remainder_sec;
+		gettimeofday(&now_time, 0);
+		delta_sec = now_time.tv_sec - aux_mcu_active_start_time.tv_sec
+				+ ((now_time.tv_usec - aux_mcu_active_start_time.tv_usec)
+						/ USEC_SEC_RATIO);
+		output(INFO,
+				"Elapsed time since AUX MCU was activated: %.3lf seconds.\n",
+				delta_sec);
+
+		duration_remainder_sec = (uint)
+				(get_aux_mcu_active_duration_seconds() - delta_sec + 1);
+		output(DEBUG,
+				"Waiting for %d seconds, at which point the AUX MCU is expected"
+				"to be inactive.\n",
+				duration_remainder_sec);
+		sleep(duration_remainder_sec);
+		if (EXIT_SUCCESS
+				!= _verify_active_processor(PIP3_PROCESSOR_ID_PRIMARY,
+						AUX_MCU_MAX_WAIT_TO_ACTIVATE_SECONDS)) {
+			active_dut_state = DUT_STATE_INVALID;
+			return EXIT_FAILURE;
+		}
+	}
+
+	if (EXIT_SUCCESS == do_pip3_status_cmd(0x00, &pip3_status_rsp)) {
 		switch (pip3_status_rsp.exec) {
 		case PIP3_EXEC_RAM:
 			output(DEBUG, "Already in the %s.\n",
 					DUT_STATE_LABELS[DUT_STATE_TP_FW_SYS_MODE_ANY]);
+
+			PIP3_Rsp_Payload_Version pip3_version_rsp;
+			if (EXIT_SUCCESS != do_pip3_version_cmd(0x00, &pip3_version_rsp)) {
+				active_dut_state = DUT_STATE_INVALID;
+				return EXIT_FAILURE;
+			}
+
 			active_flash_loader =
-					DUT_STATE_TP_FW_SECONDARY_IMAGE == pip3_status_rsp.sys_mode
-					? FLASH_LOADER_SECONDARY_IMAGE : FLASH_LOADER_NONE;
+					(PIP3_FW_CATEGORY_ID_PROGRAMMER_FW
+							== pip3_version_rsp.fw_category_id)
+					? FLASH_LOADER_TP_PROGRAMMER_IMAGE : FLASH_LOADER_NONE;
+			active_dut_state =
+					(PIP3_FW_CATEGORY_ID_PROGRAMMER_FW
+							== pip3_version_rsp.fw_category_id) ?
+								DUT_STATE_TP_FW_PROGRAMMER_IMAGE
+								: DUT_STATE_TP_FW_SYS_MODE_ANY;
 			return EXIT_SUCCESS;
 		case PIP3_EXEC_ROM:
 			output(ERROR,
 					"%s: Stuck in the PIP3 ROM-BL, which is not yet supported "
 					"by PtTools.\n",
 					__func__);
+			active_dut_state = DUT_STATE_INVALID;
 			return EXIT_FAILURE;
 		default:
 			output(ERROR, "%s: Unrecognized EXEC.\n", __func__);
+			active_dut_state = DUT_STATE_INVALID;
 			return EXIT_FAILURE;
 		}
 	}
@@ -654,6 +857,7 @@ static int _set_dut_state_fw_exec()
 				"which is only available via TTDL or the I2C-DEV channel\n"
 				"(i.e., directly performing I2C read/write operations).\n",
 				__func__);
+		active_dut_state = DUT_STATE_INVALID;
 		return EXIT_FAILURE;
 	}
 
@@ -663,6 +867,7 @@ static int _set_dut_state_fw_exec()
 				"unknown state. This could imply that the PIP2 ROM-BL image is "
 				"corrupt/invalid.\n",
 				__func__);
+		active_dut_state = DUT_STATE_INVALID;
 		return EXIT_FAILURE;
 	}
 
@@ -674,6 +879,7 @@ static int _set_dut_state_fw_exec()
 			PIP2_APP_SYS_MODE_NAMES[pip2_status_rsp.sys_mode]);
 
 	if (EXIT_SUCCESS != do_pip2_reset_cmd(0x00)) {
+		active_dut_state = DUT_STATE_INVALID;
 		return EXIT_FAILURE;
 	}
 
@@ -681,6 +887,7 @@ static int _set_dut_state_fw_exec()
 		output(ERROR,
 				"%s: Executed PIP2 RESET to try to exit the ROM Bootloader but "
 				"still unable to communicate with the .\n", __func__);
+		active_dut_state = DUT_STATE_INVALID;
 		return EXIT_FAILURE;
 	}
 
@@ -693,26 +900,57 @@ static int _set_dut_state_fw_exec()
 				__func__,
 				PIP3_EXEC_NAMES[pip3_status_rsp.exec],
 				PIP3_APP_SYS_MODE_NAMES[pip3_status_rsp.sys_mode]);
+		active_dut_state = DUT_STATE_INVALID;
 		return EXIT_FAILURE;
 	}
 
 	output(DEBUG, "Now in the %s.\n",
 			DUT_STATE_LABELS[DUT_STATE_TP_FW_SYS_MODE_ANY]);
-
+	active_dut_state = DUT_STATE_TP_FW_SYS_MODE_ANY;
 	return EXIT_SUCCESS;
 }
 
-static int _set_dut_state_fw_scanning()
+static int _set_dut_state_tp_fw_scanning()
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 	int rc = EXIT_FAILURE;
 	PIP3_Rsp_Payload_ResumeScanning resume_scan_rsp;
 	PIP3_Rsp_Payload_Status status_rsp;
+	PIP3_Rsp_Payload_Version version_rsp;
 	int wait_time_remaining = BOOT_2_SCANNING_MAX_WAIT_MS;
 
-	rc = _set_dut_state_fw_exec();
-	if (rc != EXIT_SUCCESS) {
-		return rc;
+	if (EXIT_SUCCESS != _set_dut_state_tp_fw_exec()) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	if (EXIT_SUCCESS != do_pip3_version_cmd(0x00, &version_rsp)) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	switch (version_rsp.fw_category_id) {
+	case PIP3_FW_CATEGORY_ID_TOUCH_FW:
+		break;
+	case PIP3_FW_CATEGORY_ID_PROGRAMMER_FW:
+		if (EXIT_SUCCESS
+				!= do_pip3_switch_image_cmd(0x00, PIP3_IMAGE_ID_PRIMARY)) {
+			active_dut_state = DUT_STATE_INVALID;
+			return EXIT_FAILURE;
+		}
+
+		if (EXIT_SUCCESS != _verify_fw_category(PIP3_FW_CATEGORY_ID_TOUCH_FW)) {
+			active_dut_state = DUT_STATE_INVALID;
+			return EXIT_FAILURE;
+		}
+
+		active_flash_loader = FLASH_LOADER_NONE;
+
+		break;
+	default:
+		output(ERROR, "%s: Unexpected FW Category ID: 0x%02X.\n", __func__,
+				version_rsp.fw_category_id);
+		return EXIT_FAILURE;
 	}
 
 	rc = do_pip3_status_cmd(0x00, &status_rsp);
@@ -780,19 +1018,6 @@ static int _set_dut_state_fw_scanning()
 				__func__);
 		rc = EXIT_FAILURE;
 		break;
-	case PIP3_APP_SYS_MODE_SECONDARY_IMAGE:
-		rc = do_pip3_switch_image_cmd(0x00, PIP3_IMAGE_ID_PRIMARY);
-		if (rc != EXIT_SUCCESS) {
-			return rc;
-		}
-		rc = do_pip3_status_cmd(0x00, &status_rsp);
-		if (rc == EXIT_SUCCESS
-				&& status_rsp.sys_mode == PIP3_APP_SYS_MODE_SECONDARY_IMAGE) {
-			output(ERROR, "%s: Still in %s.\n", __func__,
-					PIP3_APP_SYS_MODE_NAMES[PIP3_APP_SYS_MODE_SECONDARY_IMAGE]);
-			rc = EXIT_FAILURE;
-		}
-		break;
 	default:
 		output(ERROR, "%s: Unexpected FW System Mode: 0x%02X.\n", __func__,
 				status_rsp.sys_mode);
@@ -802,35 +1027,108 @@ static int _set_dut_state_fw_scanning()
 	return rc;
 }
 
-static int _set_dut_state_secondary_img()
+static int _set_dut_state_tp_programmer_img()
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
-	int rc = EXIT_FAILURE;
-	PIP3_Rsp_Payload_Status status_rsp;
 
 	if (!is_pip3_api_active()) {
 		output(DEBUG,
 				"Cannot enter the Secondary Loader if the PIP3 API is\n"
 				"inactive/unavailable.\n");
+		active_dut_state = DUT_STATE_INVALID;
 		return EXIT_FAILURE;
 	}
 
-	rc = do_pip3_switch_image_cmd(0x00, PIP3_IMAGE_ID_SECONDARY);
-	if (rc != EXIT_SUCCESS) {
-		return rc;
-	}
-
-	rc = do_pip3_status_cmd(0x00, &status_rsp);
-	if (rc != EXIT_SUCCESS) {
-		return rc;
-	} else if (status_rsp.exec != PIP3_EXEC_RAM
-			|| status_rsp.sys_mode != PIP3_APP_SYS_MODE_SECONDARY_IMAGE) {
-		output(ERROR, "%s: Not in the %s and %s.\n", __func__,
-				PIP3_EXEC_NAMES[PIP3_EXEC_RAM],
-				PIP3_APP_SYS_MODE_NAMES[PIP3_APP_SYS_MODE_SECONDARY_IMAGE]);
+	if (EXIT_SUCCESS
+			!= do_pip3_switch_image_cmd(0x00, PIP3_IMAGE_ID_SECONDARY)) {
+		active_dut_state = DUT_STATE_INVALID;
 		return EXIT_FAILURE;
 	}
 
-	output(DEBUG, "Entered the Secondary Image.\n");
-	return rc;
+	if (EXIT_SUCCESS
+			!= _verify_fw_category(PIP3_FW_CATEGORY_ID_PROGRAMMER_FW)) {
+		active_dut_state = DUT_STATE_INVALID;
+		return EXIT_FAILURE;
+	}
+
+	active_dut_state = DUT_STATE_TP_FW_PROGRAMMER_IMAGE;
+	output(DEBUG, "Entered the Programmer Image.\n");
+	return EXIT_SUCCESS;
+}
+
+#define VERIFY_ACTIVE_PROCESSOR_INTERVAL_BETWEEN_MSGS_SECS 3
+#define INTERVAL_BETWEEN_PIP3_STATUS_CMDS_MSECS 200
+
+static int _verify_active_processor(PIP3_Processor_ID expected_processor,
+		long double timeout_seconds)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+	struct timeval start_time;
+	PIP3_Processor_ID active_processor;
+	struct timeval previous_msg_time;
+	bool first_msg = true;
+
+	gettimeofday(&start_time, 0);
+	gettimeofday(&previous_msg_time, 0);
+	do {
+		PIP3_Rsp_Payload_Status status_rsp;
+
+		if (EXIT_SUCCESS != do_pip3_status_cmd(0x00, &status_rsp)) {
+			return EXIT_FAILURE;
+		}
+
+		active_processor = status_rsp.active_processor;
+		if (expected_processor == active_processor) {
+			return EXIT_SUCCESS;
+		} else if (time_limit_reached(&start_time, timeout_seconds)) {
+			output(ERROR,
+"%s: Response to the PIP3 STATUS command indicates that the currently active\n"
+"\t  processor is unexpected (expected %s, got %s).\n",
+					__func__,
+					PIP3_PROCESSOR_NAMES[expected_processor],
+					PIP3_PROCESSOR_NAMES[active_processor]);
+
+			return EXIT_FAILURE;
+		}
+
+		struct timeval now_time;
+		long double delta;
+		gettimeofday(&now_time, 0);
+		delta = now_time.tv_sec - previous_msg_time.tv_sec
+				+ ((now_time.tv_usec - previous_msg_time.tv_usec)
+						/ USEC_SEC_RATIO);
+		if (first_msg ||
+				delta >= VERIFY_ACTIVE_PROCESSOR_INTERVAL_BETWEEN_MSGS_SECS) {
+			output(INFO, "Waiting for %s to become the active processor.\n",
+					PIP3_PROCESSOR_NAMES[expected_processor]);
+			gettimeofday(&previous_msg_time, 0);
+			first_msg = false;
+		}
+
+		sleep_ms(INTERVAL_BETWEEN_PIP3_STATUS_CMDS_MSECS);
+	} while (expected_processor != active_processor);
+
+	return EXIT_FAILURE;
+}
+
+static int _verify_fw_category(PIP3_FW_Category_ID expected_fw_category_id)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+	PIP3_Rsp_Payload_Version version_rsp;
+
+	if (EXIT_SUCCESS != do_pip3_version_cmd(0x00, &version_rsp)) {
+		return EXIT_FAILURE;
+	}
+
+	if (version_rsp.fw_category_id != expected_fw_category_id) {
+		output(ERROR,
+"%s: Response to the PIP3 VERSION command indicates that the active firmware\n"
+"\t  is not the expected category (expected %s, got %s).\n",
+				__func__,
+				PIP3_FW_CATEGORY_NAMES[expected_fw_category_id],
+				PIP3_FW_CATEGORY_NAMES[version_rsp.fw_category_id]);
+		return EXIT_FAILURE;
+	}
+
+	return EXIT_SUCCESS;
 }

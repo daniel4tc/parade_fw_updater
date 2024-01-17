@@ -13,7 +13,7 @@ typedef enum {
 	PIP3_CMD_ID_CTRL                      = 0x02,
 	PIP3_CMD_ID_CONFIG                    = 0x03,
 	PIP3_CMD_ID_SWITCH_IMAGE              = 0x04,
-	PIP3_CMD_ID_CLEAR                     = 0x05,
+	PIP3_CMD_ID_SWITCH_ACTIVE_PROCESSOR   = 0x05,
 	PIP3_CMD_ID_RESET                     = 0x06,
 	PIP3_CMD_ID_VERSION                   = 0x07,
 
@@ -45,7 +45,7 @@ typedef enum {
 	PIP3_CMD_ID_START_SENSOR_DATA_MODE    = 0x2C,
 	PIP3_CMD_ID_STOP_ASYNC_DEBUG_DATA     = 0x2D,
 	PIP3_CMD_ID_START_TRACKING_HEATMAP    = 0x2E,
-	PIP3_CMD_ID_CALIBRATE_IDACS           = 0x30,
+	PIP3_CMD_ID_CALIBRATE                 = 0x30,
 	PIP3_CMD_ID_START_BOOTLOADER          = 0x31,
 	PIP3_CMD_ID_GET_SYSINFO               = 0x32,
 	PIP3_CMD_ID_SUSPEND_SCAN              = 0x33,

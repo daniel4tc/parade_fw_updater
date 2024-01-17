@@ -4,9 +4,10 @@
 #include <getopt.h>
 #include "dut_utils/dut_utils.h"
 #include "fw_version.h"
+#include "hid/hidraw.h"
 #include "ptu_parse.h"
 
-#define SW_VERSION "0.4.0"
+#define SW_VERSION "0.5.0"
 #define FLAG_SET 1
 #define FLAG_NOT_SET 0
 
@@ -402,7 +403,7 @@ static int _setup(const PtUpdater_Config* config)
 			"specified.\n");
 	}
 
-	if (EXIT_SUCCESS != setup_pip3_api(CHANNEL_TYPE_HIDRAW,
+	if (EXIT_SUCCESS != setup_pip3_api(&hidraw_channel,
 			HID_REPORT_ID_SOLICITED_RESPONSE)) {
 		if (is_pip2_api_active()) {
 			output(WARNING,

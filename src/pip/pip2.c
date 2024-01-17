@@ -373,6 +373,13 @@ int do_pip2_file_read_cmd(uint8_t seq_num, uint8_t file_handle,
 	}
 
 	rc = do_pip2_command(&cmd, &_rsp);
+	if (_rsp.len < PIP2_RSP_MIN_LEN) {
+		output(ERROR, "%s: PIP2 FILE_READ response is shorter than the min "
+				"possible PIP2 reponse (% bytes).\n",
+				__func__, PIP2_RSP_MIN_LEN);
+		rc = EXIT_FAILURE;
+		goto RETURN;
+	}
 
 	memcpy((void*) &rsp->header, (void*) _rsp.data, sizeof(PIP2_Rsp_Header));
 
@@ -397,6 +404,7 @@ int do_pip2_file_read_cmd(uint8_t seq_num, uint8_t file_handle,
 		rc = EXIT_FAILURE;
 	}
 
+RETURN:
 	free(_rsp.data);
 	return rc;
 }
@@ -485,12 +493,19 @@ int do_pip2_file_write_cmd(uint8_t seq_num, uint8_t file_handle, ByteData* data)
 			cmd.data[cmd.len - 1] = cmd_crc & 0xFF;
 
 			rc = do_pip2_command(&cmd, &_rsp);
-
-			data_part_start_index += data_part_len;
-			remaining_num_of_writes--;
-			output(DEBUG,
+			if (EXIT_SUCCESS != rc) {
+				output(ERROR,
+						"%s: Aborting the remaining %u FILE_WRITE commands that"
+						" are pending execution.\n",
+						__func__, remaining_num_of_writes - 1);
+				error_occurred = true;
+			} else {
+				data_part_start_index += data_part_len;
+				remaining_num_of_writes--;
+				output(DEBUG,
 					"Remaining number of FILE_WRITE commands to execute: %u.\n",
 					remaining_num_of_writes);
+			}
 		}
 	}
 

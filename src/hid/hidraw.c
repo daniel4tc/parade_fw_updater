@@ -47,6 +47,85 @@ static int _get_max_input_len();
 static int _get_max_output_len();
 static Poll_Status _read_report(ReportData* report);
 static void* _report_reader_thread(void* arg);
+static int _try_hidraw_sysfs_node(char* sysfs_node_file, int vendor_id,
+		int product_id);
+
+Channel hidraw_channel = {
+	.type               = CHANNEL_TYPE_HIDRAW,
+	.setup              = start_hidraw_report_reader,
+	.get_hid_descriptor = get_hid_descriptor_from_hidraw,
+	.send_report        = send_report_via_hidraw,
+	.get_report         = get_report_from_hidraw,
+	.teardown           = stop_hidraw_report_reader,
+};
+
+int auto_detect_hidraw_sysfs_node(int vendor_id, int product_id)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+
+	if (vendor_id > 0xFFFF) {
+		output(ERROR,
+				"%s: Invalid vendor ID. It must be less than 0xFFFF but got "
+				"0x%X.\n", __func__, vendor_id);
+		return EXIT_FAILURE;
+	} else if (product_id > 0xFFFF) {
+		output(ERROR,
+				"%s: Invalid product ID. It must be less than 0xFFFF but got "
+				"0x%X.\n", __func__, product_id);
+		return EXIT_FAILURE;
+	}
+
+	DIR* dev_dir;
+	bool dev_dir_opened = false;
+	regex_t regex;
+	bool sysfs_node_found = false;
+
+	if (regcomp(&regex, "hidraw[[:digit:]+]$", 0)) {
+		output(ERROR,
+				"%s: Failed to compile the regex pattern.\n", __func__);
+		return EXIT_FAILURE;
+	}
+
+	dev_dir = opendir("/dev/");
+	if (dev_dir == NULL) {
+		output(ERROR, "%s: Failed to open the /dev/ directory. %s [%d]\n",
+				__func__,  strerror(errno), errno);
+		goto RETURN;
+	}
+	dev_dir_opened = true;
+
+	while (!sysfs_node_found) {
+		const struct dirent* dev_dir_entry = readdir(dev_dir);
+		if (dev_dir_entry == NULL) {
+			output(ERROR,
+					"%s: Failed to read from the /dev/ directory. %s [%d]\n",
+					__func__,  strerror(errno), errno);
+			goto RETURN;
+		}
+
+		if (regexec(&regex, dev_dir_entry->d_name, 0, NULL, 0) == 0) {
+			char sysfs_node_file[HIDRAW_SYSFS_NODE_FILE_MAX_STRLEN];
+			snprintf(sysfs_node_file, HIDRAW_SYSFS_NODE_FILE_MAX_STRLEN,
+					"/dev/%s", dev_dir_entry->d_name);
+
+			output(INFO, "Trying HIDRAW sysfs node = '%s'\n", sysfs_node_file);
+
+			if (EXIT_SUCCESS == _try_hidraw_sysfs_node(sysfs_node_file,
+													vendor_id, product_id)) {
+				sysfs_node_found = true;
+			}
+		}
+	}
+
+RETURN:
+	if (dev_dir_opened) {
+		(void) closedir(dev_dir);
+	}
+
+	regfree(&regex);
+
+	return sysfs_node_found ? EXIT_SUCCESS : EXIT_FAILURE;
+}
 
 void clear_hidraw_report_buffer()
 {
@@ -641,4 +720,38 @@ static void* _report_reader_thread(void* arg)
 
 	output(DEBUG, "%s: Leaving.\n", __func__);
 	pthread_exit(NULL);
+}
+
+static int _try_hidraw_sysfs_node(char* sysfs_node_file, int vendor_id,
+		int product_id)
+{
+	int rc = EXIT_FAILURE;
+	struct hidraw_devinfo dev_info;
+
+	int fd = open(sysfs_node_file, O_RDWR | O_NONBLOCK);
+	if (fd < 0) {
+		output(ERROR, "%s: Failed to open %s. %s [%d]\n", __func__,
+				sysfs_node_file, strerror(errno), errno);
+		return EXIT_FAILURE;
+	}
+
+	if (ioctl(fd, HIDIOCGRAWINFO, &dev_info) < 0) {
+		output(ERROR,
+				"%s: Failed to read the raw device info from %s. "
+				"%s [%d]\n",
+				__func__, hidraw_sysfs_node_file, strerror(errno), errno);
+		rc = EXIT_FAILURE;
+		goto RETURN;
+	}
+
+	output(INFO, "Detected device info for %s VID = 0x%04X, PID = 0x%04X\n",
+			sysfs_node_file, dev_info.vendor, dev_info.product);
+
+	if (vendor_id == dev_info.vendor && product_id == dev_info.product) {
+		rc = init_hidraw_api(sysfs_node_file);
+	}
+
+RETURN:
+	close(fd);
+	return rc;
 }

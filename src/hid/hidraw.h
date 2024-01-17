@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include "../channel/channel.h"
 #include "../file/ptlib_file.h"
 #include "../logging.h"
 #include "../report_data.h"
@@ -18,6 +19,9 @@
 
 #define HIDRAW0_SYSFS_NODE_FILE "/dev/hidraw0"
 
+extern Channel hidraw_channel;
+
+extern int auto_detect_hidraw_sysfs_node(int vendor_id, int product_id);
 extern void clear_hidraw_report_buffer();
 extern int get_hid_descriptor_from_hidraw(HID_Descriptor* hid_desc);
 extern Poll_Status get_report_from_hidraw(ReportData* report,

@@ -5,18 +5,20 @@
 #ifndef PTLIB_DUT_UTILS_DUT_UTILS_H_
 #define PTLIB_DUT_UTILS_DUT_UTILS_H_
 
+#include "dut_state.h"
+#include "../dut_driver.h"
 #include "../pip/fw_bin_header.h"
 #include "../pip/pip2.h"
 #include "../pip/pip3.h"
-#include "dut_state.h"
 
 #define PRIMARY_FW_BIN_FILE_NUM  0x01
 #define MAX_NUM_OF_FILES_TO_ERASE  10
 
 typedef enum {
 	FLASH_LOADER_NONE,
-	FLASH_LOADER_SECONDARY_IMAGE,
+	FLASH_LOADER_TP_PROGRAMMER_IMAGE,
 	FLASH_LOADER_PIP2_ROM_BL,
+	FLASH_LOADER_AUX_MCU_PROGRAMMER_IMAGE,
 	NUM_OF_FLASH_LOADERS
 } Flash_Loader;
 
@@ -27,6 +29,7 @@ typedef struct {
 	Flash_Loader list[NUM_OF_FLASH_LOADERS];
 } Flash_Loader_Options;
 
+extern int calibrate_dut();
 extern int do_dut_fw_self_test(PIP3_Self_Test_ID self_test_id,
 		int output_format_id, ByteData* cmd_params, bool signed_data,
 		bool length_known, FW_Self_Test_Results* results);

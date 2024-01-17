@@ -3,8 +3,9 @@ SRC = \
 	src/ptupdater.c \
 	src/base64.c \
 	src/fw_version.c \
-	src/channel.c \
+	src/channel/channel.c \
 	src/crc16_ccitt.c \
+	src/dut_driver.c \
 	src/dut_utils/dut_state.c \
 	src/dut_utils/dut_utils.c \
 	src/file/ptlib_file.c \

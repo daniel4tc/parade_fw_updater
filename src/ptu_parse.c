@@ -365,7 +365,7 @@ static int _xml_process_element_file(const xmlNodePtr node, bool update_fw,
 	"\trequire using the PIP2 ROM-BL.\n"
 				);
 		} else {
-			loader_options.list[0] = FLASH_LOADER_SECONDARY_IMAGE;
+			loader_options.list[0] = FLASH_LOADER_TP_PROGRAMMER_IMAGE;
 			loader_options.list[1] = FLASH_LOADER_PIP2_ROM_BL;
 			loader_options.list[2] = FLASH_LOADER_NONE;
 			output(DEBUG,

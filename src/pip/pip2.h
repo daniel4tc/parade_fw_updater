@@ -6,7 +6,7 @@
 #define PTLIB_PIP2_H_
 
 #include "../base64.h"
-#include "../channel.h"
+#include "../channel/channel.h"
 #include "../crc16_ccitt.h"
 #include "../file/ptlib_file.h"
 #include "../I2C/i2cbusses.h"

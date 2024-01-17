@@ -17,6 +17,18 @@ void output_debug_report(char* direction, char* format, char* label, char* type,
 		ReportData* report)
 {
 	if (DEBUG == verbose_level_get()) {
+		if (report == NULL) {
+			output(WARNING, "%s: The 'report' arg is a NULL pointer.\n",
+					__func__);
+			return;
+		} else if (report->len < 1) {
+			output(WARNING,
+					"%s: The report must be at least 1 byte long, but "
+					"'report->len = 0'.\n",
+					__func__);
+			return;
+		}
+
 		uint str_index = 0;
 		char* str = (char*) malloc(
 				(report->len * TOUCH_REPORT_VALUE_HEX_FORMAT_STRLEN + 1)
@@ -51,6 +63,17 @@ void output_debug_report(char* direction, char* format, char* label, char* type,
 void log_report_data(const ReportData* report, bool include_timestamp,
 		char* label)
 {
+	if (report == NULL) {
+		output(WARNING, "%s: The 'report' arg is a NULL pointer.\n", __func__);
+		return;
+	} else if (report->len < 1) {
+		output(WARNING,
+				"%s: The report must be at least 1 byte long, but "
+				"'report->len = 0'.\n",
+				__func__);
+		return;
+	}
+
 	uint byte_index = 0;
 	uint str_index = 0;
 	char* str = (char*) malloc(
