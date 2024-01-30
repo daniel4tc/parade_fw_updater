@@ -13,12 +13,12 @@ if ! make all CC="$cc_exec" LFLAGS="$lflags" LIBS="$libs" INCLUDES="$includes"; 
     exit 1
 fi
 
-echo "Copying PtTools binary for ARM to the 'out' directory."
+echo "Copying PtUpdater binary for ARM to the 'out' directory."
 mkdir -p out/arm
 cp bin/ptupdater out/arm/.
 
 make clean
-echo "Building PtTools for Intel (x86-64)."
+echo "Building PtUpdater for Intel (x86-64)."
 cc_exec="gcc"
 lflags=" --static"
 libs=" -lxml2 -lm -ldl -lssl -lcrypto -lb64 -lz -llzma"
