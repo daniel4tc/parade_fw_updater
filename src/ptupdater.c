@@ -5,7 +5,7 @@
 #include "dut_utils/dut_utils.h"
 #include "fw_version.h"
 #include "hid/hidraw.h"
-#include "ptu_parse.h"
+// #include "ptu_parse.h"
 
 #define SW_VERSION "0.5.0"
 #define FLAG_SET 1
@@ -360,17 +360,17 @@ static int _run(const PtUpdater_Config* config)
 			active_version.config_ver);
 	}
 
-	if (config->check_target
-			&& EXIT_SUCCESS != process_ptu_file(config->ptu_file, false)) {
-		rc = EXIT_FAILURE;
-		goto END;
-	}
+	// if (config->check_target
+	// 		&& EXIT_SUCCESS != process_ptu_file(config->ptu_file, false)) {
+	// 	rc = EXIT_FAILURE;
+	// 	goto END;
+	// }
 
-	if (config->update
-			&& EXIT_SUCCESS != process_ptu_file(config->ptu_file, true)) {
-		rc = EXIT_FAILURE;
-		goto END;
-	}
+	// if (config->update
+	// 		&& EXIT_SUCCESS != process_ptu_file(config->ptu_file, true)) {
+	// 	rc = EXIT_FAILURE;
+	// 	goto END;
+	// }
 
 	rc = EXIT_SUCCESS;
 
