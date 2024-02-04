@@ -1,4 +1,4 @@
-# touch-updater
+# paradetech-updater (PtUpdater)
 Tool for updating the firmware on Parade Technologies Touch devices on a Linux host (e.g., Chrome OS).
 
 ## Requirements
