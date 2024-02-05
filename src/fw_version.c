@@ -79,6 +79,8 @@ int get_fw_version_from_bin_header(const FW_Bin_Header* bin_header,
 		+ (bin_header->fw_rev_control[1] << 8 * 2)
 		+ (bin_header->fw_rev_control[2] << 8)
 		+  bin_header->fw_rev_control[3]);
+	version->silicon_id =
+		(bin_header->silicon_id[1] << 8) +  bin_header->silicon_id[0];
 	version->config_ver = (
 		(bin_header->config_version[0] << 8) +  bin_header->config_version[1]);
 

@@ -12,6 +12,7 @@ typedef struct {
 	int minor;
 	int rev_control;
 	int config_ver;
+	int silicon_id;
 } FW_Version;
 
 extern int get_fw_version_from_flash(FW_Version* version);

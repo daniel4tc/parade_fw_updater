@@ -342,6 +342,122 @@ static void _print_help()
 	);
 }
 
+#define PRIMARY_FW_FILE_ID  (1)
+#define CONFIG_FILE_ID      (3)
+#define CALIBRATION_FILE_ID (5)
+
+/* STATIC FILE ID LIST TO ERASE */
+static const uint8_t flash_files_to_erase_id_list[] ={
+	CONFIG_FILE_ID, CALIBRATION_FILE_ID
+};
+
+static const ByteData flash_files_to_erase = {
+	.data = flash_files_to_erase_id_list,
+	.len = sizeof(flash_files_to_erase_id_list)/sizeof(flash_files_to_erase_id_list[0]),
+};
+
+static int process_fw_file(const char* file, bool update_fw)
+{
+	FILE* fptr = NULL;
+	ByteData image = { .data = NULL, .len = 0 };
+	const FW_Bin_Header* bin_header;
+	FW_Version target_version;
+	Flash_Loader_Options loader_options; 
+	int rc = EXIT_FAILURE;
+	int read_ret;
+	uint8_t* file_data;
+	uint8_t file_id;
+
+	output(DEBUG, "%s: Starting.\n", __func__);
+
+	fptr = fopen(file, "r");
+	if(!fptr) {
+		output(ERROR, "%s: Could not open file=%s.\n", __func__, file);
+		return EXIT_FAILURE;
+	}
+
+	fseek(fptr, 0, SEEK_END);
+	int file_size = ftell(fptr);
+	fseek(fptr, 0, SEEK_SET);
+
+	if (file_size < 1) {
+		output(ERROR, "%s: Invalid fw or file size= %d.\n",
+				__func__, file_size);
+		rc = EXIT_FAILURE;
+		goto CLOSE_FILE;
+	}
+
+	file_data = (unsigned char *)calloc(file_size, 1);
+	if (!file_data) {
+		output(ERROR, "Failed to allocate memory\n");
+		rc = EXIT_FAILURE;
+		goto CLOSE_FILE;
+	}
+
+	read_ret = fread(file_data, sizeof(uint8_t), file_size, fptr);
+	if (read_ret != file_size) {
+		output(ERROR, "Failed to read firmware to memory\n");
+		rc = EXIT_FAILURE;
+		goto FREE_MEM;
+	}
+
+	if (file_data[0] >= (file_size + 1)) {
+		output(ERROR, "Firmware format is invalid\n");
+		rc = EXIT_FAILURE;
+		goto FREE_MEM;
+	}
+
+	image.data = file_data;
+	image.len = file_size;
+	bin_header = (const FW_Bin_Header*) image.data;
+
+	if (EXIT_SUCCESS !=
+	    get_fw_version_from_bin_header(bin_header, &target_version)) {
+		rc = EXIT_FAILURE;
+		goto FREE_MEM;
+	}
+
+	if (!update_fw) {
+		/*
+		 * If we are not updating the firmware, then we are just trying
+		 * to get the version of the primary touch firmware image that
+		 * is embedded in the PTU file.
+		 */
+		output(INFO, "Target PID: %04X\n",
+		       target_version.silicon_id);
+		output(INFO, "Target Version: %d.%d.%d.%d\n",
+		       target_version.major, target_version.minor,
+		       target_version.rev_control, target_version.config_ver);
+		rc = EXIT_SUCCESS;
+		goto FREE_MEM;
+	}
+
+	if (update_fw) {
+		loader_options.list[0] = FLASH_LOADER_TP_PROGRAMMER_IMAGE;
+		loader_options.list[1] = FLASH_LOADER_PIP2_ROM_BL;
+		loader_options.list[2] = FLASH_LOADER_NONE;
+		output(DEBUG,
+	"Will first try using the Secondary Loader image to update the Touch Firmware image\n"
+	"\tbut if that doesn't work, will try the PIP2 ROM-BL too.\n");
+
+		file_id = PRIMARY_FW_FILE_ID;
+		if (EXIT_SUCCESS
+				!= write_image_to_dut_flash_file(
+						file_id,
+						&image,
+						&flash_files_to_erase,
+						&loader_options)) {
+			rc = EXIT_FAILURE;
+		}
+	}
+
+FREE_MEM:
+	free(file_data);
+CLOSE_FILE:
+	fclose(fptr);
+	return rc;
+}
+
 static int _run(const PtUpdater_Config* config)
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
@@ -360,17 +476,17 @@ static int _run(const PtUpdater_Config* config)
 			active_version.config_ver);
 	}
 
-	// if (config->check_target
-	// 		&& EXIT_SUCCESS != process_ptu_file(config->ptu_file, false)) {
-	// 	rc = EXIT_FAILURE;
-	// 	goto END;
-	// }
+	if (config->check_target
+			&& EXIT_SUCCESS != process_fw_file(config->ptu_file, false)) {
+		rc = EXIT_FAILURE;
+		goto END;
+	}
 
-	// if (config->update
-	// 		&& EXIT_SUCCESS != process_ptu_file(config->ptu_file, true)) {
-	// 	rc = EXIT_FAILURE;
-	// 	goto END;
-	// }
+	if (config->update
+			&& EXIT_SUCCESS != process_fw_file(config->ptu_file, true)) {
+		rc = EXIT_FAILURE;
+		goto END;
+	}
 
 	rc = EXIT_SUCCESS;
 
