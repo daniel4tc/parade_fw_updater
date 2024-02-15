@@ -27,7 +27,8 @@ extern int get_hid_descriptor_from_hidraw(HID_Descriptor* hid_desc);
 extern Poll_Status get_report_from_hidraw(ReportData* report,
 		bool apply_timeout, long double timeout_val);
 extern int get_report_descriptor_from_hidraw(ReportData* report);
-extern int init_hidraw_api(const char* sysfs_node_file);
+extern int init_hidraw_api(const char* sysfs_node_file,
+	const HID_Descriptor* hid_desc);
 extern int init_input_report(ReportData* report);
 extern int send_report_via_hidraw(const ReportData* report);
 extern int start_hidraw_report_reader(HID_Report_ID report_id);

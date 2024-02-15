@@ -38,6 +38,8 @@ static Buffer_Entry    report_buffer[REPORT_BUFFER_SIZE] = {NULL};
 static uint            report_buffer_least_recent_index;
 static uint            report_buffer_count;
 
+static HID_Descriptor _hid_desc;
+static bool hid_desc_read = false;
 static size_t hid_output_report_size;
 static size_t hid_input_report_size;
 
@@ -152,9 +154,6 @@ int get_hid_descriptor_from_hidraw(HID_Descriptor* hid_desc)
 	int read_rc;
 	int rpt_desc_size;
 	struct hidraw_devinfo dev_info;
-
-	static bool hid_desc_read = false;
-	static HID_Descriptor _hid_desc;
 
 	if (hid_desc == NULL) {
 		output(ERROR, "%s: NULL argument provided.\n", __func__);
@@ -344,7 +343,7 @@ RETURN:
 	return rc;
 }
 
-int init_hidraw_api(const char* sysfs_node_file)
+int init_hidraw_api(const char* sysfs_node_file, const HID_Descriptor* hid_desc)
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 
@@ -358,6 +357,13 @@ int init_hidraw_api(const char* sysfs_node_file)
 	}
 
 	strncpy(hidraw_sysfs_node_file, sysfs_node_file, strlen(sysfs_node_file));
+
+	if (hid_desc != NULL) {
+		output(DEBUG, "HID descriptor initialized prior to use of HIDRAW.\n");
+		memcpy((void*) &_hid_desc, (void*) hid_desc, sizeof(_hid_desc));
+		hid_desc_read = true;
+	}
+
 	return EXIT_SUCCESS;
 }
 
@@ -748,7 +754,7 @@ static int _try_hidraw_sysfs_node(char* sysfs_node_file, int vendor_id,
 			sysfs_node_file, dev_info.vendor, dev_info.product);
 
 	if (vendor_id == dev_info.vendor && product_id == dev_info.product) {
-		rc = init_hidraw_api(sysfs_node_file);
+		rc = init_hidraw_api(sysfs_node_file, NULL);
 	}
 
 RETURN:

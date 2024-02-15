@@ -7,7 +7,7 @@
 #include "hid/hidraw.h"
 #include "ptu_parse.h"
 
-#define SW_VERSION "0.5.0"
+#define SW_VERSION "0.5.1"
 #define FLAG_SET 1
 #define FLAG_NOT_SET 0
 
@@ -103,6 +103,76 @@ int main(int argc, char **argv)
 	rc = _run(&config);
 
 	exit(rc);
+}
+
+static int _get_hid_descriptor_via_i2c_dev(int i2c_bus, int i2c_addr,
+	HID_Descriptor* hid_desc)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+	int rc = EXIT_FAILURE;
+
+	char filename[20] = {0};
+
+	uint8_t cmd[] = {0x01, 0x00};
+	size_t  cmd_len = sizeof(cmd);
+	ssize_t num_bytes_written = 0;
+
+	size_t hid_desc_len = sizeof(HID_Descriptor);
+	ssize_t num_bytes_read = 0;
+
+	int dev_fd = open_i2c_dev(i2c_bus, filename, sizeof(filename), 0);
+	if (dev_fd < 0) {
+		output(ERROR,
+				"%s: Failed to open the i2c-dev sysfs node for I2C bus %d. %s "
+				"[%d].\n", __func__, i2c_bus, strerror(errno), errno);
+		return EXIT_FAILURE;
+		/* NOTREACHED */
+	}
+
+	errno = 0;
+
+	if (set_slave_addr(dev_fd, i2c_addr, 1) != 0) {
+		output(ERROR, "%s: Failed to set I2C slave device 0x%02X. %s [%d].\n",
+				__func__, i2c_addr, strerror(errno), errno);
+		goto RETURN;
+	}
+
+	num_bytes_written = write(dev_fd, cmd, cmd_len);
+	if (errno != 0) {
+		output(ERROR,
+				"%s: Failed to send the Get HID Descriptor command to %s. %s "
+				"[%d].\n",
+				__func__, filename, strerror(errno), errno);
+		goto RETURN;
+	} else if (num_bytes_written != cmd_len) {
+		output(ERROR, "%s: Incorrect number of bytes written for the Get HID "
+				"Descriptor command (expected %lu, got %d).\n",
+				__func__, cmd_len, num_bytes_written);
+		goto RETURN;
+	}
+
+	/*
+	 * Sleep for 1 millisecond to allow for the DUT to reply to the Get HID
+	 * Descriptor command.
+	 */
+	sleep_ms(1);
+
+	num_bytes_read = read(dev_fd, (uint8_t*) hid_desc, hid_desc_len);
+	if (errno != 0) {
+		output(ERROR, "%s: Failed to read report to %s. %s [%d].\n",
+				__func__, filename, strerror(errno), errno);
+		goto RETURN;
+	} else if (num_bytes_read != hid_desc_len) {
+		output(ERROR, "%s: Expected exactly %lu bytes, but read (%d) bytes.\n",
+				__func__, hid_desc_len, num_bytes_read);
+
+	} else {
+		rc = EXIT_SUCCESS;
+	}
+
+RETURN:
+	close(dev_fd);
+	return rc;
 }
 
 static void _parse_args(int argc, char **argv, PtUpdater_Config* config)
@@ -386,7 +456,20 @@ static int _setup(const PtUpdater_Config* config)
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 
-	if (EXIT_SUCCESS != init_hidraw_api(config->hidraw_sysfs_node_file)) {
+	HID_Descriptor hid_desc;
+	HID_Descriptor* hid_desc_ptr = NULL;
+	if (config->use_i2c_dev) {
+		if (EXIT_SUCCESS != _get_hid_descriptor_via_i2c_dev(config->i2c_bus,
+				config->i2c_addr, &hid_desc)) {
+			return EXIT_FAILURE;
+			/* NOTREACHED */
+		}
+
+		hid_desc_ptr = &hid_desc;
+	}
+
+	if (EXIT_SUCCESS != init_hidraw_api(config->hidraw_sysfs_node_file,
+			hid_desc_ptr)) {
 		return EXIT_FAILURE;
 		/* NOTREACHED */
 	}
