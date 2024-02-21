@@ -27,6 +27,7 @@ static int _flash_file_close(uint8_t file_handle);
 static int _flash_file_erase(uint8_t file_handle);
 static int _flash_file_open(uint8_t file_num, uint8_t* file_handle);
 static int _flash_file_write(uint8_t file_handle, ByteData* data);
+static DUT_State _get_dut_state_from_fw_sys_mode(PIP3_App_Sys_Mode sys_mode);
 static int _set_dut_state_aux_mcu_fw_programmer_img();
 static int _set_dut_state_aux_mcu_fw_utility_img();
 static int _set_dut_state_tp_bl_exec();
@@ -622,6 +623,40 @@ static int _flash_file_write(uint8_t file_handle, ByteData* data)
 	return rc;
 }
 
+static DUT_State _get_dut_state_from_fw_sys_mode(PIP3_App_Sys_Mode sys_mode)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+	DUT_State dut_state;
+
+	switch (sys_mode) {
+	case PIP3_APP_SYS_MODE_BOOT:
+		dut_state = DUT_STATE_TP_FW_BOOT;
+		break;
+
+	case PIP3_APP_SYS_MODE_SCANNING:
+		dut_state = DUT_STATE_TP_FW_SCANNING;
+		break;
+
+	case PIP3_APP_SYS_MODE_DEEP_SLEEP:
+		dut_state = DUT_STATE_TP_FW_DEEP_SLEEP;
+		break;
+
+	case PIP3_APP_SYS_MODE_TEST_CONFIG:
+		dut_state = DUT_STATE_TP_FW_TEST;
+		break;
+
+	case PIP3_APP_SYS_MODE_DEEP_STANDBY:
+		dut_state = DUT_STATE_TP_FW_DEEP_STANDBY;
+		break;
+
+	default:
+		output(ERROR, "%s: Unrecognized FW system mode.\n", __func__);
+		dut_state = DUT_STATE_INVALID;
+	}
+
+	return dut_state;
+}
+
 #define AUX_MCU_MAX_WAIT_TO_ACTIVATE_SECONDS 5
 
 static int _set_dut_state_aux_mcu()
@@ -814,7 +849,17 @@ static int _set_dut_state_tp_fw_exec()
 		}
 	}
 
-	if (EXIT_SUCCESS == do_pip3_status_cmd(0x00, &pip3_status_rsp)) {
+	fflush(stderr);
+	int initial_stderr_fd = dup(STDERR_FILENO);
+	int dev_null_fd = open("/dev/null", O_WRONLY);
+	dup2(dev_null_fd, STDERR_FILENO);
+	close(dev_null_fd);
+	int cmd_rc = do_pip3_status_cmd(0x00, &pip3_status_rsp);
+	fflush(stderr);
+	dup2(initial_stderr_fd, STDERR_FILENO);
+	close(initial_stderr_fd);
+
+	if (cmd_rc == EXIT_SUCCESS) {
 		switch (pip3_status_rsp.exec) {
 		case PIP3_EXEC_RAM:
 			output(DEBUG, "Already in the %s.\n",
@@ -830,11 +875,13 @@ static int _set_dut_state_tp_fw_exec()
 					(PIP3_FW_CATEGORY_ID_PROGRAMMER_FW
 							== pip3_version_rsp.fw_category_id)
 					? FLASH_LOADER_TP_PROGRAMMER_IMAGE : FLASH_LOADER_NONE;
+
 			active_dut_state =
 					(PIP3_FW_CATEGORY_ID_PROGRAMMER_FW
 							== pip3_version_rsp.fw_category_id) ?
 								DUT_STATE_TP_FW_PROGRAMMER_IMAGE
-								: DUT_STATE_TP_FW_SYS_MODE_ANY;
+								: _get_dut_state_from_fw_sys_mode(
+										pip3_status_rsp.sys_mode);
 			return EXIT_SUCCESS;
 		case PIP3_EXEC_ROM:
 			output(ERROR,
@@ -924,15 +971,11 @@ static int _set_dut_state_tp_fw_scanning()
 		return EXIT_FAILURE;
 	}
 
-	if (EXIT_SUCCESS != do_pip3_version_cmd(0x00, &version_rsp)) {
-		active_dut_state = DUT_STATE_INVALID;
-		return EXIT_FAILURE;
-	}
+	switch (active_dut_state) {
+	case DUT_STATE_TP_FW_SCANNING:
+		return EXIT_SUCCESS;
 
-	switch (version_rsp.fw_category_id) {
-	case PIP3_FW_CATEGORY_ID_TOUCH_FW:
-		break;
-	case PIP3_FW_CATEGORY_ID_PROGRAMMER_FW:
+	case DUT_STATE_TP_FW_PROGRAMMER_IMAGE:
 		if (EXIT_SUCCESS
 				!= do_pip3_switch_image_cmd(0x00, PIP3_IMAGE_ID_PRIMARY)) {
 			active_dut_state = DUT_STATE_INVALID;
@@ -948,9 +991,7 @@ static int _set_dut_state_tp_fw_scanning()
 
 		break;
 	default:
-		output(ERROR, "%s: Unexpected FW Category ID: 0x%02X.\n", __func__,
-				version_rsp.fw_category_id);
-		return EXIT_FAILURE;
+		;
 	}
 
 	rc = do_pip3_status_cmd(0x00, &status_rsp);
