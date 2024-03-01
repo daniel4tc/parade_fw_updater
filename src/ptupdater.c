@@ -535,7 +535,7 @@ static int _run(const PtUpdater_Config* config)
 
 	if (config->check_active) {
 		FW_Version active_version;
-		if (EXIT_SUCCESS != get_fw_version_from_flash(&active_version)) {
+		if (EXIT_SUCCESS != get_fw_version_from_flash_no_check(&active_version)) {
 			rc = EXIT_FAILURE;
 			goto END;
 		}
@@ -561,26 +561,26 @@ static int _run(const PtUpdater_Config* config)
 	rc = EXIT_SUCCESS;
 
 END:
-	if (EXIT_SUCCESS != teardown_pip2_api()
-			|| EXIT_SUCCESS != teardown_pip3_api()) {
+	if (EXIT_SUCCESS != teardown_pip3_api()) {
 		rc = EXIT_FAILURE;
 	}
 	return rc;
 }
-
-static int _setup(const PtUpdater_Config* config)
+static const uint8_t _default_hid[] = {
+	0x1E, 0x00, 0x00, 0x01, 0xD8, 0x02, 0x02, 0x00,
+	0x03, 0x00, 0x25, 0x00, 0x04, 0x00, 0xFF, 0x00,
+	0x05, 0x00, 0x06, 0x00, 0xA0, 0x1D, 0x06, 0x34,
+	0x03, 0x00, 0x00, 0x00, 0x00, 0x00};
+static int _setup(const PtUpdater_Config *config)
 {
 	output(DEBUG, "%s: Starting.\n", __func__);
 
 	HID_Descriptor hid_desc;
 	HID_Descriptor* hid_desc_ptr = NULL;
-	if (config->use_i2c_dev) {
-		if (EXIT_SUCCESS != _get_hid_descriptor_via_i2c_dev(config->i2c_bus,
-				config->i2c_addr, &hid_desc)) {
-			return EXIT_FAILURE;
-			/* NOTREACHED */
-		}
 
+	/* Use default hid descriptor to save time */
+	if (config->check_active) {
+		memcpy(&hid_desc, _default_hid, sizeof(_default_hid));
 		hid_desc_ptr = &hid_desc;
 	}
 
@@ -588,18 +588,6 @@ static int _setup(const PtUpdater_Config* config)
 			hid_desc_ptr)) {
 		return EXIT_FAILURE;
 		/* NOTREACHED */
-	}
-
-	if (config->use_i2c_dev) {
-		if (EXIT_SUCCESS != setup_pip2_api(CHANNEL_TYPE_I2CDEV, config->i2c_bus,
-				config->i2c_addr)) {
-			return EXIT_FAILURE;
-			/* NOTREACHED */
-		}
-	} else {
-		output(DEBUG,
-			"PIP2 interface will not be used because the I2C bus was not "
-			"specified.\n");
 	}
 
 	if (EXIT_SUCCESS != setup_pip3_api(&hidraw_channel,

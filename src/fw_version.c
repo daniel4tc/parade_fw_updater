@@ -62,6 +62,34 @@ int get_fw_version_from_flash(FW_Version* version)
     return EXIT_SUCCESS;
 }
 
+int get_fw_version_from_flash_no_check(FW_Version* version)
+{
+	output(DEBUG, "%s: Starting.\n", __func__);
+	PIP3_Rsp_Payload_GetSysinfo rsp;
+
+	version->major = 0;
+	version->minor = 0;
+	version->rev_control = 0;
+	version->config_ver = 0;
+
+	if (EXIT_SUCCESS != do_pip3_get_sysinfo_cmd(0x00, &rsp)) {
+		return EXIT_FAILURE;
+		/* NOTREACHED */
+	}
+
+	version->major       = rsp.fw_major_version;
+	version->minor       = rsp.fw_minor_version;
+	version->rev_control = (
+			   rsp.fw_rev_control_num[0]
+			+ (rsp.fw_rev_control_num[1] << 8)
+			+ (rsp.fw_rev_control_num[2] << 8 * 2)
+			+ (rsp.fw_rev_control_num[3] << 8 * 3));
+	version->config_ver  = (
+			rsp.fw_config_version[0] + (rsp.fw_config_version[1] << 8));
+
+    return EXIT_SUCCESS;
+}
+
 int get_fw_version_from_bin_header(const FW_Bin_Header* bin_header,
 	FW_Version* version)
 {

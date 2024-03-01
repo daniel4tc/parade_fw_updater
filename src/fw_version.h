@@ -18,6 +18,6 @@ typedef struct {
 extern int get_fw_version_from_flash(FW_Version* version);
 extern int get_fw_version_from_bin_header(const FW_Bin_Header* bin_header,
 	FW_Version* version);
-
+extern int get_fw_version_from_flash_no_check(FW_Version* version);
 #endif /* _FW_VERSION_H */
 
