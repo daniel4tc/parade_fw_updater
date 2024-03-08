@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <b64/cdecode.h>
 #include "logging.h"
 
 typedef struct {
@@ -15,6 +14,5 @@ typedef struct {
 	size_t len;
 } ByteData;
 
-extern int b64_decode(const char* b64_str, ByteData* bin_array);
 
 #endif 
