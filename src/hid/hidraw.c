@@ -476,26 +476,6 @@ int stop_hidraw_report_reader()
 	char stop_signal[] = "S";
 	write(self_pipe_fd[SELF_PIPE_WRITE], stop_signal, 2);
 
-	struct timeval start_time;
-	gettimeofday(&start_time, 0);
-	while (!time_limit_reached(&start_time, 5)
-			&& pthread_kill(report_reader_tid, 0) != ESRCH);
-
-	if (pthread_kill(report_reader_tid, 0) != ESRCH) {
-		output(DEBUG, "Terminating the thread reading HIDRAW reports.\n");
-		pthread_kill(report_reader_tid, SIGINT);
-		sleep_ms(1000);
-		if (pthread_kill(report_reader_tid, 0) != ESRCH) {
-			output(WARNING,
-					"The thread reading HIDRAW reports coundn't be interrupted."
-					" Now taking a more forceful approach.\n");
-			pthread_kill(report_reader_tid, SIGKILL);
-		}
-	} else {
-		output(DEBUG,
-				"The thread reading HIDRAW reports has already terminated.\n");
-	}
-
 	pthread_join(report_reader_tid, NULL);
 
 	for (int i = 0; i < REPORT_BUFFER_SIZE; i++) {
