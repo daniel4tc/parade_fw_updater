@@ -446,9 +446,9 @@ typedef struct {
 	PIP3_Rsp_Footer footer;
 } __attribute__((packed)) PIP3_Rsp_Payload_Version;
 
-int (*send_report_via_channel)(const ReportData* report);
+extern int (*send_report_via_channel)(const ReportData* report);
 
-Poll_Status (*get_report_via_channel)(ReportData* report, bool apply_timeout,
+extern Poll_Status (*get_report_via_channel)(ReportData* report, bool apply_timeout,
 		long double timeout_val);
 
 extern int do_pip3_command(ReportData* cmd, ReportData* rsp);

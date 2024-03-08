@@ -60,6 +60,9 @@ static uint8_t     async_debug_data_mode_seq;
 
 static int _verify_pip3_rsp_report(HID_Report_ID report_id, uint8_t seq,
 		PIP3_Cmd_ID cmd_id, const HID_Input_PIP3_Response* rsp);
+int (*send_report_via_channel)(const ReportData* report);
+Poll_Status (*get_report_via_channel)(ReportData* report, bool apply_timeout,
+		long double timeout_val);
 
 int do_pip3_command(ReportData* cmd, ReportData* rsp)
 {
