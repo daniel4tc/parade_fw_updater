@@ -6,7 +6,7 @@
 #include "fw_version.h"
 #include "hid/hidraw.h"
 
-#define SW_VERSION "0.5.1"
+#define SW_VERSION "0.6.1"
 #define FLAG_SET 1
 #define FLAG_NOT_SET 0
 
@@ -432,7 +432,7 @@ static int process_fw_file(const char* file, bool update_fw)
 	const FW_Bin_Header* bin_header;
 	FW_Version target_version;
 	Flash_Loader_Options loader_options; 
-	int rc = EXIT_FAILURE;
+	int rc = EXIT_SUCCESS;
 	int read_ret;
 	uint8_t* file_data;
 	uint8_t file_id;
