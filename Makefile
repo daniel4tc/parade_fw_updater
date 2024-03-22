@@ -26,15 +26,22 @@ OBJ = $(patsubst %.c,%.o, $(SRC))
 
 BIN_DIR = bin
 
+CC ?= gcc
+CFLAGS += -Wall -std=gnu99
+
+LIB_FLAGS = -pthread
 # Defaults to args for x86-64 build:
-LFLAGS= --static
+STATIC_BUILD ?= n
+ifeq ($(STATIC_BUILD), y)
+	LDFLAGS += -static
+endif
 
 %.o: %.c
-	$(CC) -c $< -std=gnu99 -o $@
+	$(CC) -c $<  $(CFLAGS) -o $@
 
 all: $(SRC)
 	mkdir -p $(BIN_DIR)
-	$(CC) -pthread -Wall -std=gnu99 -s -o ./$(BIN_DIR)/ptupdater $(INCLUDES) $(SRC) $(LFLAGS)
+	$(CC) -o ./$(BIN_DIR)/ptupdater $(SRC) $(CFLAGS) $(LIB_FLAGS) $(LDFLAGS)
 
 clean:
 	rm -rf $(OBJ)
