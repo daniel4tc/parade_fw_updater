@@ -416,7 +416,7 @@ static void _print_help()
 #define CALIBRATION_FILE_ID (5)
 
 /* STATIC FILE ID LIST TO ERASE */
-static const uint8_t flash_files_to_erase_id_list[] ={
+static uint8_t flash_files_to_erase_id_list[] ={
 	CONFIG_FILE_ID, CALIBRATION_FILE_ID
 };
 

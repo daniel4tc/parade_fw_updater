@@ -455,7 +455,8 @@ int start_hidraw_report_reader(HID_Report_ID report_id)
 	}
 
 	while (report_reader_thread_status
-			== REPORT_READER_THREAD_STATUS_NOT_STARTED);
+			== REPORT_READER_THREAD_STATUS_NOT_STARTED)
+			sleep_ms(1);
 
 	rc = EXIT_SUCCESS;
 
@@ -615,7 +616,7 @@ static int _get_max_output_len()
 		return -1;
 	}
 
-	int max_output_len;
+	int max_output_len = 0xFF;
 	uint8_t ping_cmd[HID_MAX_OUTPUT_REPORT_SIZE] = {
 			0x04, 0x06, 0x00, 0x08, 0x00, 0x2A, 0xF0
 	};
