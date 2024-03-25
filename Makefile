@@ -30,11 +30,11 @@ CC ?= gcc
 CFLAGS += -Wall -std=gnu99
 
 LIB_FLAGS = -pthread
-# Defaults to args for x86-64 build:
-STATIC_BUILD ?= n
-ifeq ($(STATIC_BUILD), y)
-	LDFLAGS += -static
-endif
+# Don't use -s/-static on Chromeos
+#STATIC_BUILD ?= n
+#ifeq ($(STATIC_BUILD), y)
+#	LDFLAGS += -static
+#endif
 
 %.o: %.c
 	$(CC) -c $<  $(CFLAGS) -o $@
