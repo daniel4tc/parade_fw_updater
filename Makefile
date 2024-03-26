@@ -37,7 +37,7 @@ LIB_FLAGS = -pthread
 #endif
 
 %.o: %.c
-	$(CC) -c $<  $(CFLAGS) -o $@
+	$(CC) -c $<  $(CFLAGS) $(CPPFLAGS) -o $@
 
 all: $(SRC)
 	mkdir -p $(BIN_DIR)
