@@ -41,7 +41,7 @@ LIB_FLAGS = -pthread
 
 all: $(SRC)
 	mkdir -p $(BIN_DIR)
-	$(CC) -o ./$(BIN_DIR)/ptupdater $(SRC) $(CFLAGS) $(LIB_FLAGS) $(LDFLAGS)
+	$(CC) -o ./$(BIN_DIR)/ptupdater $(SRC) $(CFLAGS) $(CPPFLAGS) $(LIB_FLAGS) $(LDFLAGS)
 
 clean:
 	rm -rf $(OBJ)
