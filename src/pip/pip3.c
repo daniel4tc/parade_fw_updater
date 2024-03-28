@@ -1545,13 +1545,18 @@ int teardown_pip3_api()
 		return EXIT_SUCCESS;
 	}
 
-	PIP3_Rsp_Payload_ResumeScanning resume_scanning_rsp;
-	int rc = do_pip3_resume_scanning_cmd(0x00, &resume_scanning_rsp);
+	/*
+	 * Save time cost when to check firmware version, and 
+	 * avoid to generate negative result if primary fw is bad.
+	 *
+	 * PIP3_Rsp_Payload_ResumeScanning resume_scanning_rsp;
+	 * int rc = do_pip3_resume_scanning_cmd(0x00, &resume_scanning_rsp);
+	 */
 
 	active_channel->teardown();
 	active_channel = NULL;
 
-	return rc;
+	return EXIT_SUCCESS;
 }
 
 static int _verify_pip3_rsp_report(HID_Report_ID report_id, uint8_t seq,
