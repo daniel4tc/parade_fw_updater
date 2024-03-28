@@ -705,16 +705,8 @@ static void* _report_reader_thread(void* arg)
 	report_reader_thread_status = REPORT_READER_THREAD_STATUS_EXIT;
 	pthread_mutex_unlock(&report_buffer_mutex);
 
-	/*
-	 * Minijail call on Chromeos is stuck when using pthread_exit(),
-	 * while it works smoothly with function return() somehow. Some website
-	 * mentions there will be implicit call of pthread_exit() if performing
-	 * a return. So take this a temporary workaround
-	 *
-	 * pthread_exit(NULL);
-	 */
 	output(DEBUG, "%s: Leaving.\n", __func__);
-	return NULL;
+	pthread_exit(NULL);
 }
 
 static int _try_hidraw_sysfs_node(char* sysfs_node_file, int vendor_id,
